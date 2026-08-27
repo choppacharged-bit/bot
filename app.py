@@ -32,7 +32,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
-    timeout=20.0, # Таймаут 20 сек
+    timeout=20.0,
 )
 
 EXTRA_HEADERS = {}
@@ -221,16 +221,13 @@ def ask_formatter(question: str, powerbi_result) -> str:
 # ---------------------------------------------------------------------------
 # Автоматическая часовая рассылка в Telegram
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Автоматическая часовая рассылка в Telegram
-# ---------------------------------------------------------------------------
 def send_telegram_report(text: str):
     """Отправка текста сообщения в Telegram-чат."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
     
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text
@@ -243,26 +240,15 @@ def send_telegram_report(text: str):
 
 
 def send_hourly_stats():
-    """Фоновая задача: запрос продаж за сегодня и отправка в Telegram."""
+    """Фоновая задача: запуск авто-отчета по расписанию."""
     try:
         log.info("Запуск регулярного часового отчета по продажам...")
-        
-        # 1. Запрашиваем маршутизатор о продажах за сегодня
         routed = ask_router("продажи по магазинам за сегодня")
         dax_query = routed.get("dax", "")
         
         if not dax_query:
             log.warning("Маршрутизатор не вернул DAX для авто-отчета.")
             return
-
-        # 2. Выполняем DAX через твою прослойку Power BI
-        # ПРИМЕЧАНИЕ: Подставь сюда вызов твоей функции выполнения DAX, если она есть в коде, 
-        # например: powerbi_data = execute_pbi_dax(dax_query)
-        # Если прослойка вызывается внешним сервисом (Make/n8n/Node-RED), передавай результат сюда.
-        
-        # 3. Форматируем результат (замени sample_data на реальный результат из Power BI)
-        # text_reply = ask_formatter("продажи по магазинам за сегодня", powerbi_data)
-        # send_telegram_report(f"⏰ Авто-сводка по продажам:\n\n{text_reply}")
 
     except Exception as e:
         log.error(f"Ошибка при выполнении send_hourly_stats: {e}")
@@ -273,8 +259,8 @@ scheduler = BackgroundScheduler(timezone="Europe/Moscow")
 scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
 scheduler.start()
 
-# ТЕСТ ПРИ ЗАПУСКЕ: Чтобы сразу проверить, доходят ли сообщения
-send_telegram_report("🔔 Проверка авто-уведомлений: Планировщик отчетов успешно запущен!")
+# ТЕСТ ПРИ ЗАПУСКЕ: Проверка доставки в Telegram при запуске сервера
+send_telegram_report("🔔 Проверка авто-уведомлений: Сервис успешно запущен!")
 
 # ---------------------------------------------------------------------------
 # API эндпоинты Flask
