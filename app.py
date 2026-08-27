@@ -250,6 +250,11 @@ def send_hourly_stats():
 # Настраиваем планировщик (каждый час с 09:00 до 21:00 по Москве)
 scheduler = BackgroundScheduler(timezone="Europe/Moscow")
 scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
+# Запустит отправку 1 раз сразу при старте приложения для проверки связи с Telegram
+send_telegram_report("🤖 Проверка связи: планировщик авто-отчетов успешно запущен!")
+
+scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
+scheduler.start()
 scheduler.start()
 
 # ---------------------------------------------------------------------------
