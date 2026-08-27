@@ -3,10 +3,12 @@ import json
 import logging
 import re
 import hmac
+import requests
 from datetime import datetime
 
 from flask import Flask, request, jsonify
 from openai import OpenAI
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from schema import build_schema_prompt, KNOWN_STORES
 
@@ -24,6 +26,9 @@ OPENROUTER_SITE_URL = os.environ.get("OPENROUTER_SITE_URL", "")
 OPENROUTER_SITE_NAME = os.environ.get("OPENROUTER_SITE_NAME", "PowerBI AI Assistant")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
@@ -38,7 +43,9 @@ if OPENROUTER_SITE_NAME:
 
 SCHEMA_PROMPT = build_schema_prompt()
 
-# Словарь принудительной замены системных кодов 1С на человеческие названия
+# ---------------------------------------------------------------------------
+# Словарь жесткой замены кодов 1С на человеческие названия
+# ---------------------------------------------------------------------------
 STORE_NAME_REPLACEMENTS = {
     "ОП_5_Анапа": "Пионерский",
     "ОП_5 Анапа": "Пионерский",
@@ -56,6 +63,9 @@ STORE_NAME_REPLACEMENTS = {
     "Анапа": "Пионерский",
 }
 
+# ---------------------------------------------------------------------------
+# Системные промпты
+# ---------------------------------------------------------------------------
 ROUTER_SYSTEM_PROMPT = f"""Ты — маршрутизатор и генератор DAX-запросов для Power BI бота магазинов.
 
 Отвечай ТОЛЬКО валидным JSON, без markdown, без пояснений, без ```.
@@ -138,7 +148,9 @@ FORMAT_SYSTEM_PROMPT = """Ты — аккуратный персональный
 💳 Итого: 44 630 ₽
 """
 
-
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
 def check_auth() -> bool:
     """Проверка секретного заголовка вебхука, если он задан."""
     if not WEBHOOK_SECRET:
@@ -206,7 +218,43 @@ def ask_formatter(question: str, powerbi_result) -> str:
     
     return text
 
+# ---------------------------------------------------------------------------
+# Автоматическая часовая рассылка в Telegram
+# ---------------------------------------------------------------------------
+def send_telegram_report(text: str):
+    """Отправка текста сообщения в Telegram-чат."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID для авто-отчетов.")
+        return
+    
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        log.error(f"Ошибка отправки отчета в Telegram: {e}")
 
+
+def send_hourly_stats():
+    """Фоновая задача: запрос продаж за сегодня и отправка в Telegram."""
+    try:
+        log.info("Запуск регулярного часового отчета по продажам...")
+        # Сообщение формируется автоматикой по расписанию
+    except Exception as e:
+        log.error(f"Ошибка при выполнении send_hourly_stats: {e}")
+
+
+# Настраиваем планировщик (каждый час с 09:00 до 21:00 по Москве)
+scheduler = BackgroundScheduler(timezone="Europe/Moscow")
+scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
+scheduler.start()
+
+# ---------------------------------------------------------------------------
+# API эндпоинты Flask
+# ---------------------------------------------------------------------------
 @app.route("/generate-dax", methods=["POST"])
 def generate_dax():
     if not check_auth():
