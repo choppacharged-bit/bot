@@ -43,6 +43,51 @@ ROUTER_SYSTEM_PROMPT = f"""Ты — маршрутизатор и генерат
 
 {SCHEMA_PROMPT}
 
+ПРАВИЛА ОПРЕДЕЛЕНИЯ ПЕРИОДОВ И ДАТ:
+- Запомни названия колонок с датами в таблицах:
+  • В 'Продажи', 'Расходы', 'Чеки', 'Валовая приыбль', 'Выплаченое зп', 'Смены' колонка называется [Дата]
+  • В таблице 'Выручки' колонка называется [Дата.1] (ВАЖНО!)
+- Если пользователь указывает конкретный месяц (например, "за август", "за июль"):
+  Используй: MONTH(<КолонкаДаты>) = <НомерМесяца> && YEAR(<КолонкаДаты>) = <Год>
+  Игнорируй TODAY(), бери именно названный месяц!
+- Период "этот месяц" / "текущий месяц":
+  Используй: MONTH(<КолонкаДаты>) = MONTH(TODAY()) && YEAR(<КолонкаДаты>) = YEAR(TODAY())
+- Период "прошлый месяц":
+  Используй: MONTH(<КолонкаДаты>) = MONTH(EDATE(TODAY(),-1)) && YEAR(<КолонкаДаты>) = YEAR(EDATE(TODAY(),-1))
+- период "сегодня" -> <КолонкаДаты>=TODAY()
+- период "вчера" -> <КолонкаДаты>=TODAY()-1
+
+КОМПЛЕКСНЫЕ ЗАПРОСЫ И "ВСЁ СРАЗУ":
+- Если пользователь просит "всё сразу", "полную аналитику" или несколько показателей одновременно, собирай их в ОДИН EVALUATE ROW с несколькими колонками:
+  EVALUATE ROW(
+    "Продажи", CALCULATE(SUM('Продажи'[Сумма]), ...),
+    "Расходы", CALCULATE(SUM('Расходы'[Сумма]), ...),
+    "ВаловаяПрибыль", CALCULATE(SUM('Валовая приыбль'[Валовая прибыль, руб.]), ...),
+    "КолвоЧеков", CALCULATE(SUM('Чеки'[Кол-во чеков]), ...)
+  )
+
+КОНТЕКСТ ДИАЛОГА:
+- Учитывай историю диалога! Если пользователь пишет "а сравни с прошлым месяцем" или "а распиши расходы", смотри, о каком магазине шла речь ранее, и подставляй его код.
+- Никогда не переспрашивай магазин, если он уже упоминался в истории переписки.
+
+ОБЩИЕ ПРАВИЛА DAX:
+- Всегда используй шаблон: EVALUATE ROW("Result", <выражение>)
+- Без фильтров: EVALUATE ROW("Result", SUM('Таблица'[Колонка]))
+- С фильтрами: EVALUATE ROW("Result", CALCULATE(SUM('Таблица'[Колонка]), <условия через &&>))
+- Если вопрос про зарплату за расчётный период — используй готовую меру EVALUATE ROW("Result", [Сумма Итого по ЗП]).
+- Если вопрос про выручку для зарплаты (2%) и магазин Озеро или Джемете — используй 'Озеро+Джемете' в 'Выручки'.
+- КРИТИЧЕСКИ ВАЖНО: всегда переводи человеческое название магазина в реальный код (например, "Джемете" -> "ОП_1 Анапа Ленинградская").
+
+Если вопрос относится к данным — верни:
+{{"route": "powerbi", "message": "", "dax": "<готовый DAX-запрос>"}}
+
+Если вопрос НЕ относится к данным — верни:
+{{"route": "chat", "message": "<готовый ответ пользователю>", "dax": ""}}
+
+ВАЖНО: ключи всегда route, message, dax — на английском."""
+
+{SCHEMA_PROMPT}
+
 Правила генерации DAX:
 - Всегда используй шаблон: EVALUATE ROW("Result", <выражение>)
 - Без фильтров: EVALUATE ROW("Result", SUM('Таблица'[Колонка]))
@@ -112,10 +157,14 @@ def check_auth():
 
 
 def ask_router(question: str, history: list = None) -> dict:
-    """Вызов модели через OpenRouter с учетом истории сообщений."""
-    messages = [{"role": "system", "content": ROUTER_SYSTEM_PROMPT}]
+    """Вызов модели через OpenRouter с учетом динамической даты и истории."""
+    now = datetime.now()
+    date_context = f"\nТЕКУЩАЯ ДАТА СЕРВЕРА: {now.strftime('%d.%m.%Y')}, Месяц: {now.month}, Год: {now.year}\n"
+    
+    dynamic_system_prompt = ROUTER_SYSTEM_PROMPT + date_context
 
-    # Добавляем историю переписки, если Make её передал
+    messages = [{"role": "system", "content": dynamic_system_prompt}]
+
     if history and isinstance(history, list):
         for msg in history:
             role = msg.get("role", "user")
@@ -133,7 +182,6 @@ def ask_router(question: str, history: list = None) -> dict:
     )
     text = resp.choices[0].message.content.strip()
 
-    # Надежно извлекаем JSON из ответа
     json_match = re.search(r"\{.*\}", text, re.DOTALL)
     if json_match:
         text = json_match.group(0)
@@ -142,14 +190,14 @@ def ask_router(question: str, history: list = None) -> dict:
 
 
 def ask_formatter(question: str, powerbi_result) -> str:
-    """Вызов модели через OpenRouter: превращает сырой результат Power BI в дружелюбный ответ."""
+    """Вызов модели через OpenRouter: форматирует ответ без обрывов текста и без Markdown."""
     user_content = (
         f"Вопрос пользователя: {question}\n"
         f"Результат из Power BI (JSON): {json.dumps(powerbi_result, ensure_ascii=False)}"
     )
     resp = client.chat.completions.create(
         model=OPENROUTER_MODEL,
-        max_tokens=500,
+        max_tokens=1000, # Увеличено до 1000, чтобы ответы не обрывались
         extra_headers=EXTRA_HEADERS,
         messages=[
             {"role": "system", "content": FORMAT_SYSTEM_PROMPT},
@@ -158,7 +206,7 @@ def ask_formatter(question: str, powerbi_result) -> str:
     )
     text = resp.choices[0].message.content.strip()
     
-    # ПРИНУДИТЕЛЬНО УБИРАЕМ ВСЕ ЗВЁЗДОЧКИ И МАРКДАУН-СИМВОЛЫ
+    # Принудительная зачистка звёздочек и бэктиков
     text = text.replace("**", "").replace("*", "").replace("`", "")
     
     return text
