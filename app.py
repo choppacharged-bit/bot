@@ -143,16 +143,6 @@ FORMAT_SYSTEM_PROMPT = """Ты — аккуратный персональный
 2. Используй структурированные списки с эмодзи (🏬, 💰, 💳, 📦, 📊, 📉).
 3. Суммы разделяй пробелами (например: 1 147 125 ₽).
 4. Запрещено приписывать одинаковые общие расходы к разным магазинам — если в JSON данные различаются или их нет, указывай точные цифры из JSON.
-
-Пример ответа:
-💰 Продажи за сегодня:
-
-🏬 Пионерский: 18 500 ₽
-🏬 Озеро: 14 130 ₽
-🏬 Утриш: 7 000 ₽
-🏬 Джемете: 5 000 ₽
-
-💳 Итого: 44 630 ₽
 """
 
 # ---------------------------------------------------------------------------
@@ -222,7 +212,6 @@ def ask_formatter(question: str, powerbi_result) -> str:
 # Клавиатуры Telegram (Reply + Inline)
 # ---------------------------------------------------------------------------
 def get_main_reply_keyboard():
-    """Нижнее постоянное меню"""
     return {
         "keyboard": [
             [{"text": "📊 Продажи"}, {"text": "💸 Расходы"}],
@@ -233,7 +222,6 @@ def get_main_reply_keyboard():
     }
 
 def get_sales_inline_keyboard():
-    """Подменю продаж"""
     return {
         "inline_keyboard": [
             [
@@ -253,7 +241,6 @@ def get_sales_inline_keyboard():
     }
 
 def get_expenses_inline_keyboard():
-    """Подменю расходов"""
     return {
         "inline_keyboard": [
             [
@@ -268,7 +255,6 @@ def get_expenses_inline_keyboard():
     }
 
 def get_salary_inline_keyboard():
-    """Подменю зарплаты"""
     return {
         "inline_keyboard": [
             [
@@ -279,7 +265,6 @@ def get_salary_inline_keyboard():
     }
 
 def get_plans_inline_keyboard():
-    """Подменю планов и итогов"""
     return {
         "inline_keyboard": [
             [
@@ -300,8 +285,7 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-    # Заменили BOT_TOKEN на token
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text
@@ -318,20 +302,8 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
             log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
     except Exception as e:
         log.error(f"Ошибка соединения с Telegram: {e}")
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-
-    try:
-        res = requests.post(url, json=payload, timeout=10)
-        if res.status_code == 200:
-            log.info(f"Отправка в Telegram прошла успешно (200 OK) для чата {chat_id}")
-        else:
-            log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
-    except Exception as e:
-        log.error(f"Ошибка соединения с Telegram: {e}")
 
 def send_hourly_stats():
-    """Фоновая задача: запуск авто-отчета по расписанию."""
     try:
         log.info("Запуск регулярного часового отчета по продажам...")
         routed = ask_router("продажи по магазинам за сегодня")
@@ -380,7 +352,8 @@ def telegram_webhook():
         if token:
             requests.post(
                 f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/answerCallbackQuery",
-                json={"callback_query_id": callback_id}
+                json={"callback_query_id": callback_id},
+                timeout=5
             )
 
         query_map = {
