@@ -257,10 +257,8 @@ def get_report_inline_keyboard():
 # Работа с Telegram API
 # ---------------------------------------------------------------------------
 def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: dict = None):
-    """
-    Отправка текста сообщения в Telegram-чат с опциональной клавиатурой.
-    """
     raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    # Извлекаем ТОЛЬКО токен формата 123456789:ABC...
     match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
     token = match.group(1) if match else raw_token.strip(" '\"[]")
 
@@ -270,12 +268,25 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
+    # Собираем чистый URL без квадратных скобок
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     
     payload = {
         "chat_id": chat_id,
         "text": text
     }
+
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code == 200:
+            log.info(f"Отправка в Telegram прошла успешно (200 OK) для чата {chat_id}")
+        else:
+            log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
+    except Exception as e:
+        log.error(f"Ошибка соединения с Telegram: {e}")
 
     if reply_markup:
         payload["reply_markup"] = reply_markup
@@ -381,29 +392,24 @@ def telegram_webhook():
     return jsonify({"status": "ok"}), 200
 
 
-@app.route("/generate-dax", methods=["POST"])
-def generate_dax():
-    if not check_auth():
-        return jsonify({"error": "unauthorized"}), 401
+@app.route("/telegram-webhook", methods=["POST"])
+def telegram_webhook():
+    data = request.get_json(force=True, silent=True) or {}
+    
+    # Регистрация /start и кнопок...
+    if "message" in data:
+        msg = data["message"]
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "").strip()
 
-    payload = request.get_json(force=True, silent=True) or {}
-    question = (payload.get("message") or "").strip()
-    history = payload.get("history", [])
-
-    if not question:
-        return jsonify({"error": "no message provided"}), 400
-
-    try:
-        routed = ask_router(question, history)
-    except Exception:
-        log.exception("Router call failed")
-        return jsonify(
-            {
-                "route": "chat",
-                "message": "Не смог разобрать вопрос, попробуйте переформулировать.",
-                "dax": "",
-            }
-        )
+        if text == "/start":
+            send_telegram_report(
+                "Добро пожаловать! Используйте меню ниже для быстрого запроса данных.",
+                target_chat_id=chat_id,
+                reply_markup=get_main_reply_keyboard()
+            )
+            
+    return jsonify({"status": "ok"}), 200
 
     return jsonify(routed)
 
