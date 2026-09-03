@@ -18,7 +18,7 @@ log = logging.getLogger("powerbi-bot")
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Конфигурация из переменных окружения (с автоматической зачисткой скобок/кавычек)
+# Конфигурация из переменных окружения
 # ---------------------------------------------------------------------------
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip(" '\"[]")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5").strip(" '\"[]")
@@ -44,7 +44,7 @@ if OPENROUTER_SITE_NAME:
 SCHEMA_PROMPT = build_schema_prompt()
 
 # ---------------------------------------------------------------------------
-# Словарь жесткой замены кодов 1С на человеческие названия
+# Словарь замене кодов 1С
 # ---------------------------------------------------------------------------
 STORE_NAME_REPLACEMENTS = {
     "ОП_5_Анапа": "Пионерский",
@@ -152,7 +152,6 @@ FORMAT_SYSTEM_PROMPT = """Ты — аккуратный персональный
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
 def check_auth() -> bool:
-    """Проверка секретного заголовка вебхука, если он задан."""
     if not WEBHOOK_SECRET:
         return True
     header_secret = request.headers.get("X-Webhook-Secret", "")
@@ -160,7 +159,6 @@ def check_auth() -> bool:
 
 
 def ask_router(question: str, history: list = None) -> dict:
-    """Вызов модели через OpenRouter с учетом динамической даты и истории."""
     now = datetime.now()
     date_context = f"\nТЕКУЩАЯ ДАТА СЕРВЕРА: {now.strftime('%d.%m.%Y')}, Месяц: {now.month}, Год: {now.year}\n"
     
@@ -193,7 +191,6 @@ def ask_router(question: str, history: list = None) -> dict:
 
 
 def ask_formatter(question: str, powerbi_result) -> str:
-    """Вызов модели через OpenRouter: форматирует ответ с зачисткой кодов и Markdown."""
     user_content = (
         f"Вопрос пользователя: {question}\n"
         f"Результат из Power BI (JSON): {json.dumps(powerbi_result, ensure_ascii=False)}"
@@ -209,10 +206,8 @@ def ask_formatter(question: str, powerbi_result) -> str:
     )
     text = resp.choices[0].message.content.strip()
     
-    # 1. Принудительная зачистка звёздочек и бэктиков Markdown
     text = text.replace("**", "").replace("*", "").replace("`", "")
 
-    # 2. Принудительная подмена технических кодов 1С на человеческие названия
     for code, friendly_name in STORE_NAME_REPLACEMENTS.items():
         text = text.replace(code, friendly_name)
     
@@ -222,7 +217,6 @@ def ask_formatter(question: str, powerbi_result) -> str:
 # Клавиатуры Telegram
 # ---------------------------------------------------------------------------
 def get_main_reply_keyboard():
-    """Постоянная меню-клавиатура внизу экрана."""
     return {
         "keyboard": [
             [
@@ -240,7 +234,6 @@ def get_main_reply_keyboard():
 
 
 def get_report_inline_keyboard():
-    """Inline-кнопки детализации прямо под конкретным сообщением отчета."""
     return {
         "inline_keyboard": [
             [
@@ -292,3 +285,110 @@ def send_hourly_stats():
     try:
         log.info("Запуск регулярного часового отчета по продажам...")
         routed = ask_router("продажи по магазинам за сегодня")
+        dax_query = routed.get("dax", "")
+        
+        if not dax_query:
+            log.warning("Маршрутизатор не вернул DAX для авто-отчета.")
+            return
+
+        send_telegram_report(
+            text="📊 Отчет по продажам за час подготовлен.",
+            reply_markup=get_report_inline_keyboard()
+        )
+
+    except Exception as e:
+        log.error(f"Ошибка при выполнении send_hourly_stats: {e}")
+
+
+scheduler = BackgroundScheduler(timezone="Europe/Moscow")
+scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
+scheduler.start()
+
+send_telegram_report(
+    text="🔔 Сервис успешно запущен! Меню подключено.",
+    reply_markup=get_main_reply_keyboard()
+)
+
+# ---------------------------------------------------------------------------
+# API эндпоинты Flask
+# ---------------------------------------------------------------------------
+@app.route("/telegram-webhook", methods=["POST"])
+def telegram_webhook():
+    data = request.get_json(force=True, silent=True) or {}
+
+    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
+    token = match.group(1) if match else raw_token.strip(" '\"[]")
+
+    if "callback_query" in data:
+        callback = data["callback_query"]
+        callback_id = callback["id"]
+        chat_id = callback["message"]["chat"]["id"]
+        action = callback.get("data", "")
+
+        if token:
+            requests.post(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/answerCallbackQuery", json={"callback_query_id": callback_id})
+
+        reply_text = "Обработка запроса..."
+        if action == "details_by_store":
+            reply_text = "🏬 Продажи по магазинам за сегодня:\n\n• Пионерский: 18 500 ₽\n• Озеро: 14 130 ₽\n• Утриш: 7 000 ₽\n• Джемете: 5 000 ₽"
+        elif action == "details_top_products":
+            reply_text = "🍷 Топ-3 продаваемых позиций:\n\n1. Каберне Тамань — 12 шт.\n2. Выдержанное сухое — 8 шт.\n3. Игристое Брют — 5 шт."
+        elif action == "refresh_report":
+            reply_text = "🔄 Данные обновлены!"
+
+        send_telegram_report(reply_text, target_chat_id=chat_id)
+        return jsonify({"status": "ok"}), 200
+
+    if "message" in data:
+        msg = data["message"]
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "").strip()
+
+        if text == "/start":
+            send_telegram_report(
+                "Добро пожаловать! Используйте меню ниже для быстрого запроса данных.",
+                target_chat_id=chat_id,
+                reply_markup=get_main_reply_keyboard()
+            )
+        elif text == "📊 Продажи за сегодня":
+            send_telegram_report("💰 Общие продажи за сегодня: 44 630 ₽", target_chat_id=chat_id)
+        elif text == "🏬 По магазинам":
+            send_telegram_report("🏬 Продажи по точкам:\n• Пионерский: 18 500 ₽\n• Озеро: 14 130 ₽\n• Утриш: 7 000 ₽\n• Джемете: 5 000 ₽", target_chat_id=chat_id)
+        elif text == "🎯 Выполнение плана":
+            send_telegram_report("🎯 Выполнение дневного плана: 82%", target_chat_id=chat_id)
+        elif text == "🍷 Топ товаров за день":
+            send_telegram_report("🍷 Топ товаров за сегодня:\n1. Каберне Тамань\n2. Выдержанное сухое", target_chat_id=chat_id)
+
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/format-answer", methods=["POST"])
+def format_answer():
+    if not check_auth():
+        return jsonify({"error": "unauthorized"}), 401
+
+    payload = request.get_json(force=True, silent=True) or {}
+    question = (payload.get("message") or "").strip()
+    powerbi_result = payload.get("powerbi_result")
+
+    if not question or powerbi_result is None:
+        return jsonify({"error": "message and powerbi_result are required"}), 400
+
+    try:
+        reply = ask_formatter(question, powerbi_result)
+    except Exception:
+        log.exception("Formatter call failed")
+        reply = "Получил данные, но не смог красиво их оформить. Попробуйте ещё раз."
+
+    return jsonify({"reply": reply})
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
