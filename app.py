@@ -250,7 +250,9 @@ def get_report_inline_keyboard():
 # Работа с Telegram API
 # ---------------------------------------------------------------------------
 def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: dict = None):
-    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    
+    # Регулярка достанет только токен вида "8283040111:AAHMyFPRe_CblyozKZlLLNo-o5EA3PkuHfs"
     match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
     token = match.group(1) if match else raw_token.strip(" '\"[]")
 
@@ -260,7 +262,8 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
+    # Формируем чистый URL
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     
     payload = {
         "chat_id": chat_id,
@@ -278,7 +281,6 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
             log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
     except Exception as e:
         log.error(f"Ошибка соединения с Telegram: {e}")
-
 
 def send_hourly_stats():
     """Фоновая задача: запуск авто-отчета по расписанию."""
