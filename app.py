@@ -215,7 +215,7 @@ def ask_formatter(question: str, powerbi_result) -> str:
 
     for code, friendly_name in STORE_NAME_REPLACEMENTS.items():
         text = text.replace(code, friendly_name)
-    
+
     return text
 
 # ---------------------------------------------------------------------------
@@ -324,7 +324,7 @@ def send_hourly_stats():
         log.info("Запуск регулярного часового отчета по продажам...")
         routed = ask_router("продажи по магазинам за сегодня")
         dax_query = routed.get("dax", "")
-        
+
         if not dax_query:
             log.warning("Маршрутизатор не вернул DAX для авто-отчета.")
             return
@@ -363,9 +363,11 @@ def telegram_webhook():
         action = callback.get("data", "")
 
         if token:
-            requests.post(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/answerCallbackQuery", json={"callback_query_id": callback_id})
+            requests.post(
+                f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/answerCallbackQuery",
+                json={"callback_query_id": callback_id}
+            )
 
-        # Маппинг кнопок в читаемые запросы для роутера
         query_map = {
             "sales_by_store_today": "Продажи по магазинам за сегодня",
             "sales_yesterday": "Продажи за вчера по магазинам",
@@ -387,10 +389,8 @@ def telegram_webhook():
         user_text = query_map.get(action, "Продажи за сегодня")
         routed = ask_router(user_text)
 
-        send_telegram_report(
-            text=f"Запрос обработан для действия: {action}",
-            target_chat_id=chat_id
-        )
+        reply_text = routed.get("message") or f"Сгенерирован DAX для '{user_text}':\n`{routed.get('dax', '')}`"
+        send_telegram_report(text=reply_text, target_chat_id=chat_id)
         return jsonify({"status": "ok"})
 
     # 2. Обработка обычных сообщений
@@ -439,12 +439,11 @@ def telegram_webhook():
             )
             return jsonify({"status": "ok"})
 
-        # Если текстовый вопрос пользователя
+        # Произвольный вопрос пользователя
         routed = ask_router(text)
-        send_telegram_report(
-            text=f"Получен вопрос: {text}",
-            target_chat_id=chat_id
-        )
+        reply_text = routed.get("message") or f"Запрос: {text}\nDAX:\n`{routed.get('dax', '')}`"
+
+        send_telegram_report(text=reply_text, target_chat_id=chat_id)
 
     return jsonify({"status": "ok"})
 
