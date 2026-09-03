@@ -300,11 +300,7 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-  TOKEN = os.getenv("TELEGRAM_TOKEN")
-url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
-# Вызов запроса
-response = requests.post(url, json=payload)
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text
