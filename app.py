@@ -221,19 +221,27 @@ def ask_formatter(question: str, powerbi_result) -> str:
 # ---------------------------------------------------------------------------
 # Автоматическая часовая рассылка в Telegram
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Автоматическая часовая рассылка в Telegram
+# ---------------------------------------------------------------------------
 def send_telegram_report(text: str, target_chat_id: str = None):
     """
-    Отправка сообщения в Telegram.
+    Отправка текста сообщения в Telegram-чат.
     Если target_chat_id не передан, берет дефолтный TELEGRAM_CHAT_ID из настроек.
     """
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(" '\"[]")
+    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    
+    # Регуляркой достаем ТОЛЬКО токен (цифры:буквы), отсекая любой случайно затесавшийся URL
+    match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
+    token = match.group(1) if match else raw_token.strip(" '\"[]")
+
     chat_id = target_chat_id or os.environ.get("TELEGRAM_CHAT_ID", "").strip(" '\"[]")
 
     if not token or not chat_id:
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
-    
-    # Ссылка СТРОГО в таком виде, без квадратных скобок и Markdown!
+
+    # СТРОГО чистая ссылка, без квадратных скобок!
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     
     payload = {
@@ -243,7 +251,7 @@ def send_telegram_report(text: str, target_chat_id: str = None):
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
-            log.info(f"Сообщение успешно отправлено в чат {chat_id}")
+            log.info(f"Отправка в Telegram прошла успешно (200 OK) для чата {chat_id}")
         else:
             log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
     except Exception as e:
