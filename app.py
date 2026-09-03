@@ -26,9 +26,6 @@ OPENROUTER_SITE_URL = os.environ.get("OPENROUTER_SITE_URL", "").strip(" '\"[]")
 OPENROUTER_SITE_NAME = os.environ.get("OPENROUTER_SITE_NAME", "PowerBI AI Assistant").strip(" '\"[]")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "").strip(" '\"[]")
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(" '\"[]")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip(" '\"[]")
-
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
@@ -44,7 +41,17 @@ if OPENROUTER_SITE_NAME:
 SCHEMA_PROMPT = build_schema_prompt()
 
 # ---------------------------------------------------------------------------
-# Словарь замене кодов 1С
+# Вспомогательная функция очистки токена
+# ---------------------------------------------------------------------------
+def clean_token(raw_token: str) -> str:
+    """Извлекает чистый токен Telegram вида 123456:ABC..."""
+    if not raw_token:
+        return ""
+    match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
+    return match.group(1) if match else raw_token.strip(" '\"[]")
+
+# ---------------------------------------------------------------------------
+# Словарь замены кодов 1С
 # ---------------------------------------------------------------------------
 STORE_NAME_REPLACEMENTS = {
     "ОП_5_Анапа": "Пионерский",
@@ -161,7 +168,6 @@ def check_auth() -> bool:
 def ask_router(question: str, history: list = None) -> dict:
     now = datetime.now()
     date_context = f"\nТЕКУЩАЯ ДАТА СЕРВЕРА: {now.strftime('%d.%m.%Y')}, Месяц: {now.month}, Год: {now.year}\n"
-    
     dynamic_system_prompt = ROUTER_SYSTEM_PROMPT + date_context
 
     messages = [{"role": "system", "content": dynamic_system_prompt}]
@@ -205,7 +211,6 @@ def ask_formatter(question: str, powerbi_result) -> str:
         ],
     )
     text = resp.choices[0].message.content.strip()
-    
     text = text.replace("**", "").replace("*", "").replace("`", "")
 
     for code, friendly_name in STORE_NAME_REPLACEMENTS.items():
@@ -214,34 +219,72 @@ def ask_formatter(question: str, powerbi_result) -> str:
     return text
 
 # ---------------------------------------------------------------------------
-# Клавиатуры Telegram
+# Клавиатуры Telegram (Reply + Inline)
 # ---------------------------------------------------------------------------
 def get_main_reply_keyboard():
+    """Нижнее постоянное меню"""
     return {
         "keyboard": [
-            [
-                {"text": "📊 Продажи за сегодня"},
-                {"text": "🏬 По магазинам"}
-            ],
-            [
-                {"text": "🎯 Выполнение плана"},
-                {"text": "🍷 Топ товаров за день"}
-            ]
+            [{"text": "📊 Продажи"}, {"text": "💸 Расходы"}],
+            [{"text": "💼 Зарплата"}, {"text": "🎯 План и Итоги"}]
         ],
         "resize_keyboard": True,
         "is_persistent": True
     }
 
-
-def get_report_inline_keyboard():
+def get_sales_inline_keyboard():
+    """Подменю продаж"""
     return {
         "inline_keyboard": [
             [
-                {"text": "🏬 По магазинам", "callback_data": "details_by_store"},
-                {"text": "🍷 Топ товаров", "callback_data": "details_top_products"}
+                {"text": "🏬 По магазинам (сегодня)", "callback_data": "sales_by_store_today"},
+                {"text": "📅 За вчера", "callback_data": "sales_yesterday"}
             ],
             [
-                {"text": "🔄 Обновить данные", "callback_data": "refresh_report"}
+                {"text": "📆 Этот месяц", "callback_data": "sales_month"},
+                {"text": "📍 Пионерский", "callback_data": "sales_pionersky"}
+            ],
+            [
+                {"text": "📍 Озеро", "callback_data": "sales_ozero"},
+                {"text": "📍 Утриш", "callback_data": "sales_utrish"},
+                {"text": "📍 Джемете", "callback_data": "sales_dzhemete"}
+            ]
+        ]
+    }
+
+def get_expenses_inline_keyboard():
+    """Подменю расходов"""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🏬 По магазинам (месяц)", "callback_data": "expenses_by_store"},
+                {"text": "📂 По статьям", "callback_data": "expenses_by_category"}
+            ],
+            [
+                {"text": "📅 За сегодня", "callback_data": "expenses_today"},
+                {"text": "📆 За этот месяц", "callback_data": "expenses_month"}
+            ]
+        ]
+    }
+
+def get_salary_inline_keyboard():
+    """Подменю зарплаты"""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🧮 Расчётный период", "callback_data": "salary_period"},
+                {"text": "👥 По сотрудникам", "callback_data": "salary_by_emp"}
+            ]
+        ]
+    }
+
+def get_plans_inline_keyboard():
+    """Подменю планов и итогов"""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🎯 Выполнение плана", "callback_data": "plan_status"},
+                {"text": "🍷 Топ товаров за день", "callback_data": "top_products_today"}
             ]
         ]
     }
@@ -250,21 +293,14 @@ def get_report_inline_keyboard():
 # Работа с Telegram API
 # ---------------------------------------------------------------------------
 def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: dict = None):
-    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    
-    # Регулярка достанет только токен вида "8283040111:AAHMyFPRe_CblyozKZlLLNo-o5EA3PkuHfs"
-    match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
-    token = match.group(1) if match else raw_token.strip(" '\"[]")
-
+    token = clean_token(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     chat_id = target_chat_id or os.environ.get("TELEGRAM_CHAT_ID", "").strip(" '\"[]")
 
     if not token or not chat_id:
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-    # Формируем чистый URL
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text
@@ -295,7 +331,7 @@ def send_hourly_stats():
 
         send_telegram_report(
             text="📊 Отчет по продажам за час подготовлен.",
-            reply_markup=get_report_inline_keyboard()
+            reply_markup=get_sales_inline_keyboard()
         )
 
     except Exception as e:
@@ -317,11 +353,9 @@ send_telegram_report(
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
     data = request.get_json(force=True, silent=True) or {}
+    token = clean_token(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
 
-    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
-    token = match.group(1) if match else raw_token.strip(" '\"[]")
-
+    # 1. Обработка Inline-кнопок
     if "callback_query" in data:
         callback = data["callback_query"]
         callback_id = callback["id"]
@@ -331,66 +365,6 @@ def telegram_webhook():
         if token:
             requests.post(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/answerCallbackQuery", json={"callback_query_id": callback_id})
 
-        reply_text = "Обработка запроса..."
-        if action == "details_by_store":
-            reply_text = "🏬 Продажи по магазинам за сегодня:\n\n• Пионерский: 18 500 ₽\n• Озеро: 14 130 ₽\n• Утриш: 7 000 ₽\n• Джемете: 5 000 ₽"
-        elif action == "details_top_products":
-            reply_text = "🍷 Топ-3 продаваемых позиций:\n\n1. Каберне Тамань — 12 шт.\n2. Выдержанное сухое — 8 шт.\n3. Игристое Брют — 5 шт."
-        elif action == "refresh_report":
-            reply_text = "🔄 Данные обновлены!"
-
-        send_telegram_report(reply_text, target_chat_id=chat_id)
-        return jsonify({"status": "ok"}), 200
-
-    if "message" in data:
-        msg = data["message"]
-        chat_id = msg["chat"]["id"]
-        text = msg.get("text", "").strip()
-
-        if text == "/start":
-            send_telegram_report(
-                "Добро пожаловать! Используйте меню ниже для быстрого запроса данных.",
-                target_chat_id=chat_id,
-                reply_markup=get_main_reply_keyboard()
-            )
-        elif text == "📊 Продажи за сегодня":
-            send_telegram_report("💰 Общие продажи за сегодня: 44 630 ₽", target_chat_id=chat_id)
-        elif text == "🏬 По магазинам":
-            send_telegram_report("🏬 Продажи по точкам:\n• Пионерский: 18 500 ₽\n• Озеро: 14 130 ₽\n• Утриш: 7 000 ₽\n• Джемете: 5 000 ₽", target_chat_id=chat_id)
-        elif text == "🎯 Выполнение плана":
-            send_telegram_report("🎯 Выполнение дневного плана: 82%", target_chat_id=chat_id)
-        elif text == "🍷 Топ товаров за день":
-            send_telegram_report("🍷 Топ товаров за сегодня:\n1. Каберне Тамань\n2. Выдержанное сухое", target_chat_id=chat_id)
-
-    return jsonify({"status": "ok"}), 200
-
-
-@app.route("/format-answer", methods=["POST"])
-def format_answer():
-    if not check_auth():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(force=True, silent=True) or {}
-    question = (payload.get("message") or "").strip()
-    powerbi_result = payload.get("powerbi_result")
-
-    if not question or powerbi_result is None:
-        return jsonify({"error": "message and powerbi_result are required"}), 400
-
-    try:
-        reply = ask_formatter(question, powerbi_result)
-    except Exception:
-        log.exception("Formatter call failed")
-        reply = "Получил данные, но не смог красиво их оформить. Попробуйте ещё раз."
-
-    return jsonify({"reply": reply})
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+        # Маппинг кнопок в читаемые запросы для роутера
+        query_map = {
+            "sales_by_store_today": "Продажи
