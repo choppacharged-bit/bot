@@ -223,7 +223,7 @@ def ask_formatter(question: str, powerbi_result) -> str:
 # ---------------------------------------------------------------------------
 def send_telegram_report(text: str, target_chat_id: str = None):
     """
-    Отправка текста сообщения в Telegram-чат.
+    Отправка сообщения в Telegram.
     Если target_chat_id не передан, берет дефолтный TELEGRAM_CHAT_ID из настроек.
     """
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(" '\"[]")
@@ -233,8 +233,9 @@ def send_telegram_report(text: str, target_chat_id: str = None):
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
     
-    # Чистая ссылка без Markdown-разметки
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
+    # Ссылка СТРОГО в таком виде, без квадратных скобок и Markdown!
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    
     payload = {
         "chat_id": chat_id,
         "text": text
@@ -242,12 +243,11 @@ def send_telegram_report(text: str, target_chat_id: str = None):
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
-            log.info(f"Отправка в Telegram прошла успешно (200 OK) для чата {chat_id}")
+            log.info(f"Сообщение успешно отправлено в чат {chat_id}")
         else:
             log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
     except Exception as e:
         log.error(f"Ошибка соединения с Telegram: {e}")
-
 
 def send_hourly_stats():
     """Фоновая задача: запуск авто-отчета по расписанию."""
