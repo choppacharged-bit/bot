@@ -258,7 +258,6 @@ def get_report_inline_keyboard():
 # ---------------------------------------------------------------------------
 def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: dict = None):
     raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    # Извлекаем ТОЛЬКО токен формата 123456789:ABC...
     match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
     token = match.group(1) if match else raw_token.strip(" '\"[]")
 
@@ -268,25 +267,12 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-    # Собираем чистый URL без квадратных скобок
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
     
     payload = {
         "chat_id": chat_id,
         "text": text
     }
-
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-
-    try:
-        res = requests.post(url, json=payload, timeout=10)
-        if res.status_code == 200:
-            log.info(f"Отправка в Telegram прошла успешно (200 OK) для чата {chat_id}")
-        else:
-            log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
-    except Exception as e:
-        log.error(f"Ошибка соединения с Telegram: {e}")
 
     if reply_markup:
         payload["reply_markup"] = reply_markup
@@ -306,140 +292,3 @@ def send_hourly_stats():
     try:
         log.info("Запуск регулярного часового отчета по продажам...")
         routed = ask_router("продажи по магазинам за сегодня")
-        dax_query = routed.get("dax", "")
-        
-        if not dax_query:
-            log.warning("Маршрутизатор не вернул DAX для авто-отчета.")
-            return
-
-        # Здесь при желании можно добавить запрос к Power BI и генерацию итогового текста.
-        # Для тестового вызова отправляем сообщение с Inline-кнопками:
-        send_telegram_report(
-            text="📊 Отчет по продажам за час подготовлен.",
-            reply_markup=get_report_inline_keyboard()
-        )
-
-    except Exception as e:
-        log.error(f"Ошибка при выполнении send_hourly_stats: {e}")
-
-
-# Настраиваем планировщик (каждый час с 09:00 до 21:00 по Москве)
-scheduler = BackgroundScheduler(timezone="Europe/Moscow")
-scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
-scheduler.start()
-
-# ТЕСТ ПРИ ЗАПУСКЕ: Проверка доставки в Telegram с постоянной клавиатурой
-send_telegram_report(
-    text="🔔 Сервис успешно запущен! Меню подключено.",
-    reply_markup=get_main_reply_keyboard()
-)
-
-# ---------------------------------------------------------------------------
-# API эндпоинты Flask
-# ---------------------------------------------------------------------------
-@app.route("/telegram-webhook", methods=["POST"])
-def telegram_webhook():
-    """Обработчик входящих сообщений и нажатий на кнопки из Telegram."""
-    data = request.get_json(force=True, silent=True) or {}
-
-    raw_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    match = re.search(r"(\d+:[A-Za-z0-9_-]+)", raw_token)
-    token = match.group(1) if match else raw_token.strip(" '\"[]")
-
-    # 1. Обработка нажатий на Inline-кнопки под сообщениями
-    if "callback_query" in data:
-        callback = data["callback_query"]
-        callback_id = callback["id"]
-        chat_id = callback["message"]["chat"]["id"]
-        action = callback.get("data", "")
-
-        # Снимаем загрузку с кнопки в интерфейсе Telegram
-        if token:
-            requests.post(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/answerCallbackQuery", json={"callback_query_id": callback_id})
-
-        reply_text = "Обработка запроса..."
-        if action == "details_by_store":
-            reply_text = "🏬 Продажи по магазинам за сегодня:\n\n• Пионерский: 18 500 ₽\n• Озеро: 14 130 ₽\n• Утриш: 7 000 ₽\n• Джемете: 5 000 ₽"
-        elif action == "details_top_products":
-            reply_text = "🍷 Топ-3 продаваемых позиций:\n\n1. Каберне Тамань — 12 шт.\n2. Выдержанное сухое — 8 шт.\n3. Игристое Брют — 5 шт."
-        elif action == "refresh_report":
-            reply_text = "🔄 Данные обновлены!"
-
-        send_telegram_report(reply_text, target_chat_id=chat_id)
-        return jsonify({"status": "ok"}), 200
-
-    # 2. Обработка обычной текстовой команды или нажатия на постоянное меню
-    if "message" in data:
-        msg = data["message"]
-        chat_id = msg["chat"]["id"]
-        text = msg.get("text", "").strip()
-
-        if text == "/start":
-            send_telegram_report(
-                "Добро пожаловать! Используйте меню ниже для быстрого запроса данных.",
-                target_chat_id=chat_id,
-                reply_markup=get_main_reply_keyboard()
-            )
-        elif text == "📊 Продажи за сегодня":
-            send_telegram_report("💰 Общие продажи за сегодня: 44 630 ₽", target_chat_id=chat_id)
-        elif text == "🏬 По магазинам":
-            send_telegram_report("🏬 Продажи по точкам:\n• Пионерский: 18 500 ₽\n• Озеро: 14 130 ₽\n• Утриш: 7 000 ₽\n• Джемете: 5 000 ₽", target_chat_id=chat_id)
-        elif text == "🎯 Выполнение плана":
-            send_telegram_report("🎯 Выполнение дневного плана: 82%", target_chat_id=chat_id)
-        elif text == "🍷 Топ товаров за день":
-            send_telegram_report("🍷 Топ товаров за сегодня:\n1. Каберне Тамань\n2. Выдержанное сухое", target_chat_id=chat_id)
-
-    return jsonify({"status": "ok"}), 200
-
-
-@app.route("/telegram-webhook", methods=["POST"])
-def telegram_webhook():
-    data = request.get_json(force=True, silent=True) or {}
-    
-    # Регистрация /start и кнопок...
-    if "message" in data:
-        msg = data["message"]
-        chat_id = msg["chat"]["id"]
-        text = msg.get("text", "").strip()
-
-        if text == "/start":
-            send_telegram_report(
-                "Добро пожаловать! Используйте меню ниже для быстрого запроса данных.",
-                target_chat_id=chat_id,
-                reply_markup=get_main_reply_keyboard()
-            )
-            
-    return jsonify({"status": "ok"}), 200
-
-    return jsonify(routed)
-
-
-@app.route("/format-answer", methods=["POST"])
-def format_answer():
-    if not check_auth():
-        return jsonify({"error": "unauthorized"}), 401
-
-    payload = request.get_json(force=True, silent=True) or {}
-    question = (payload.get("message") or "").strip()
-    powerbi_result = payload.get("powerbi_result")
-
-    if not question or powerbi_result is None:
-        return jsonify({"error": "message and powerbi_result are required"}), 400
-
-    try:
-        reply = ask_formatter(question, powerbi_result)
-    except Exception:
-        log.exception("Formatter call failed")
-        reply = "Получил данные, но не смог красиво их оформить. Попробуйте ещё раз."
-
-    return jsonify({"reply": reply})
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
