@@ -300,12 +300,24 @@ def send_telegram_report(text: str, target_chat_id: str = None, reply_markup: di
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    # Заменили BOT_TOKEN на token
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text
     }
 
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code == 200:
+            log.info(f"Отправка в Telegram прошла успешно (200 OK) для чата {chat_id}")
+        else:
+            log.error(f"Ошибка Telegram API ({res.status_code}) для чата {chat_id}: {res.text}")
+    except Exception as e:
+        log.error(f"Ошибка соединения с Telegram: {e}")
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
