@@ -352,6 +352,9 @@ send_telegram_report(
 # ---------------------------------------------------------------------------
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
+    if not check_auth():
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
     data = request.get_json(force=True, silent=True) or {}
     token = clean_token(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
 
