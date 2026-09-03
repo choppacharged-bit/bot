@@ -18,16 +18,16 @@ log = logging.getLogger("powerbi-bot")
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Конфигурация из переменных окружения
+# Конфигурация из переменных окружения (с автоматической зачисткой скобок/кавычек)
 # ---------------------------------------------------------------------------
-OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5")
-OPENROUTER_SITE_URL = os.environ.get("OPENROUTER_SITE_URL", "")
-OPENROUTER_SITE_NAME = os.environ.get("OPENROUTER_SITE_NAME", "PowerBI AI Assistant")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip(" '\"[]")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5").strip(" '\"[]")
+OPENROUTER_SITE_URL = os.environ.get("OPENROUTER_SITE_URL", "").strip(" '\"[]")
+OPENROUTER_SITE_NAME = os.environ.get("OPENROUTER_SITE_NAME", "PowerBI AI Assistant").strip(" '\"[]")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "").strip(" '\"[]")
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(" '\"[]")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip(" '\"[]")
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -223,20 +223,26 @@ def ask_formatter(question: str, powerbi_result) -> str:
 # ---------------------------------------------------------------------------
 def send_telegram_report(text: str):
     """Отправка текста сообщения в Telegram-чат."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(" '\"[]")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip(" '\"[]")
+
+    if not token or not chat_id:
         log.warning("Не заданы TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
         return
     
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){token}/sendMessage"
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": text
     }
     try:
         res = requests.post(url, json=payload, timeout=10)
-        log.info(f"Отправка в Telegram: {res.status_code}")
+        if res.status_code == 200:
+            log.info("Отправка в Telegram прошла успешно (200 OK)")
+        else:
+            log.error(f"Ошибка Telegram API ({res.status_code}): {res.text}")
     except Exception as e:
-        log.error(f"Ошибка отправки отчета в Telegram: {e}")
+        log.error(f"Ошибка соединения с Telegram: {e}")
 
 
 def send_hourly_stats():
