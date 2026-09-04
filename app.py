@@ -86,12 +86,6 @@ except Exception as e:
     log.error(f"Failed to initialize services: {str(e)}", exc_info=True)
     raise
 
-# Переменные для подключения Power BI REST API из Environment
-PBI_TENANT_ID = os.getenv("PBI_TENANT_ID")
-PBI_CLIENT_ID = os.getenv("PBI_CLIENT_ID")
-PBI_CLIENT_SECRET = os.getenv("PBI_CLIENT_SECRET")
-PBI_DATASET_ID = os.getenv("PBI_DATASET_ID")
-
 # ============================================================================
 # КЛАВИАТУРЫ TELEGRAM
 # ============================================================================
@@ -174,17 +168,22 @@ def get_plans_inline_keyboard():
 
 def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
     """Выполнение DAX-запроса через Power BI REST API."""
-    if not all([PBI_TENANT_ID, PBI_CLIENT_ID, PBI_CLIENT_SECRET, PBI_DATASET_ID]):
+    tenant_id = os.getenv("PBI_TENANT_ID")
+    client_id = os.getenv("PBI_CLIENT_ID")
+    client_secret = os.getenv("PBI_CLIENT_SECRET")
+    dataset_id = os.getenv("PBI_DATASET_ID")
+
+    if not all([tenant_id, client_id, client_secret, dataset_id]):
         log.warning("Power BI API environment variables are not fully configured")
         return {"error": "Power BI credentials missing"}
 
     try:
         # 1. Получение OAuth2 токена доступа Azure AD
-        token_url = f"https://login.microsoftonline.com/{PBI_TENANT_ID}/oauth2/v2.0/token"
+        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
         token_data = {
             "grant_type": "client_credentials",
-            "client_id": PBI_CLIENT_ID,
-            "client_secret": PBI_CLIENT_SECRET,
+            "client_id": client_id,
+            "client_secret": client_secret,
             "scope": "https://analysis.windows.net/powerbi/api/.default"
         }
         
@@ -193,7 +192,7 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         access_token = token_res.json().get("access_token")
 
         # 2. Выполнение DAX-запроса в датасет Power BI
-        pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{PBI_DATASET_ID}/executeQueries"
+        pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{dataset_id}/executeQueries"
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
