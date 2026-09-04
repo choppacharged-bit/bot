@@ -16,6 +16,7 @@ PowerBI AI-ассистент — Telegram бот для аналитики.
 import os
 import json
 import logging
+import hmac
 from datetime import datetime
 
 from flask import Flask, request, jsonify
@@ -168,7 +169,6 @@ def check_auth() -> bool:
     if not config.telegram.webhook_secret:
         return True
     
-    import hmac
     header_secret = request.headers.get("X-Webhook-Secret", "")
     return hmac.compare_digest(header_secret, config.telegram.webhook_secret)
 
@@ -204,13 +204,14 @@ scheduler = BackgroundScheduler(timezone="Europe/Moscow")
 scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
 scheduler.start()
 
-# Отправляем сообщение о запуске
+# Отправляем сообщение о запуске при старте
 try:
-    telegram_client.send_message(
-        config.telegram.chat_id,
-        "🔔 Сервис успешно запущен! Меню подключено.",
-        get_main_reply_keyboard()
-    )
+    if config.telegram.chat_id:
+        telegram_client.send_message(
+            config.telegram.chat_id,
+            "🔔 Сервис успешно запущен! Меню подключено.",
+            get_main_reply_keyboard()
+        )
 except Exception as e:
     log.error(f"Failed to send startup message: {str(e)}")
 
@@ -230,7 +231,7 @@ def health():
 
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
-    """Главный webhook для обработки сообщений из Telegram."""
+    """Главный webhook для обработки сообщений из Telegram или Make."""
     
     # Проверяем авторизацию
     if not check_auth():
