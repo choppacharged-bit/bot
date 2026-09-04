@@ -4,7 +4,7 @@ Pydantic модели для валидации входных данных.
 """
 
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class RouterRequest(BaseModel):
@@ -12,8 +12,8 @@ class RouterRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000)
     history: Optional[List[Dict[str, str]]] = None
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "message": "продажи по магазинам за сегодня",
                 "history": [
@@ -22,22 +22,24 @@ class RouterRequest(BaseModel):
                 ]
             }
         }
+    )
 
 
 class RouterResponse(BaseModel):
     """Ответ маршрутизатора."""
-    route: str = Field(..., regex="^(powerbi|chat)$")
+    route: str = Field(..., pattern="^(powerbi|chat)$")
     message: str = ""
     dax: str = ""
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "route": "powerbi",
                 "message": "",
                 "dax": "EVALUATE ROW(\"Result\", SUM('Продажи'[Сумма]))"
             }
         }
+    )
 
 
 class FormatterRequest(BaseModel):
@@ -45,8 +47,8 @@ class FormatterRequest(BaseModel):
     message: str = Field(..., min_length=1)
     powerbi_result: Dict[str, Any]
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "message": "продажи сегодня",
                 "powerbi_result": {
@@ -64,6 +66,7 @@ class FormatterRequest(BaseModel):
                 }
             }
         }
+    )
 
 
 class FormatterResponse(BaseModel):
