@@ -297,7 +297,7 @@ def telegram_webhook():
                 log.error(f"Router error: {str(e)}")
                 reply_text = "❌ Ошибка при обработке запроса. Попробуйте позже."
             
-            telegram_client.send_message(reply_text, target_chat_id=chat_id)
+            telegram_client.send_message(chat_id, reply_text)
             return jsonify({"status": "ok"})
         
         except Exception as e:
@@ -368,7 +368,7 @@ def telegram_webhook():
                 log.error(f"Router error: {str(e)}")
                 reply_text = "❌ Ошибка при обработке запроса. Попробуйте позже."
             
-            telegram_client.send_message(reply_text, target_chat_id=chat_id)
+            telegram_client.send_message(chat_id, reply_text)
             return jsonify({"status": "ok"})
         
         except Exception as e:
