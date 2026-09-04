@@ -24,7 +24,7 @@ ROUTER_SYSTEM_PROMPT_TEMPLATE = """Ты — маршрутизатор и ген
 
 ПРАВИЛА ОПРЕДЕЛЕНИЯ ПЕРИОДОВ И ДАТ:
 - Запомни названия колонок с датами в таблицах:
-  • В 'Продажи', 'Расходы', 'Чеки', 'Валовая приыбль', 'Выплаченое зп', 'Смены' колонка называется [Дата]
+  • В 'Продажи', 'Расходы', 'Чеки', 'Валовая прибыль', 'Выплаченное зп', 'Смены' колонка называется [Дата]
   • В таблице 'Выручки' колонка называется [Дата.1] (ВАЖНО!)
 - Если пользователь указывает конкретный месяц (например, "за август", "за июль"):
   Используй: MONTH(<КолонкаДаты>) = <НомерМесяца> && YEAR(<КолонкаДаты>) = <Год>
@@ -48,7 +48,7 @@ ROUTER_SYSTEM_PROMPT_TEMPLATE = """Ты — маршрутизатор и ген
 Если вопрос НЕ относится к данным — верни:
 {{"route": "chat", "message": "<готовый ответ пользователю>", "dax": ""}}
 
-ИМПОРТНО: ключи всегда route, message, dax — на английском."""
+ВАЖНО: ключи всегда route, message, dax — на английском."""
 
 FORMAT_SYSTEM_PROMPT = """Ты — аккуратный персональный AI-ассистент владельца сети магазинов.
 
@@ -112,10 +112,11 @@ class RouterService:
             
             messages.append({"role": "user", "content": question})
             
-            # Вызываем API
+            # Вызываем API с принудительной валидацией JSON
             response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=1000,
+                response_format={"type": "json_object"},
                 extra_headers=extra_headers or {},
                 messages=messages,
             )
@@ -196,7 +197,7 @@ class FormatterService:
             text = response.choices[0].message.content.strip()
             
             # Очищаем форматирование
-            text = text.replace("**", "").replace("*", "").replace("`", "")
+            text = text.replace("**", "").replace("*", "").replace("`", "").replace("#", "")
             
             # Применяем замены кодов магазинов
             for code, friendly_name in self.store_replacements.items():
