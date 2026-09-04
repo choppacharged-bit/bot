@@ -1,400 +1,183 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-PowerBI AI-ассистент — Telegram бот для аналитики.
-Улучшенная версия с модульной архитектурой.
-
-Архитектура:
-- config.py: конфигурация из переменных окружения
-- logger.py: структурированное JSON логирование
-- utils.py: вспомогательные функции
-- services.py: бизнес-логика (RouterService, FormatterService)
-- telegram_client.py: работа с Telegram API
-- schema.py: схема данных Power BI
+Главный точка входа приложения Flask: обработка вебхуков и связка сервисов.
 """
 
 import os
 import json
-import logging
-import hmac
-from datetime import datetime
-
+import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from apscheduler.schedulers.background import BackgroundScheduler
 
-# Импортируем наши модули
-from config import AppConfig
-from logger import setup_logger, log_extra
-from utils import clean_token, extract_json_from_text
+from logger import setup_logger
 from services import RouterService, FormatterService
-from telegram_client import TelegramClient
-from schema import build_schema_prompt, STORE_CODE_MAP
+from schema import KNOWN_STORES
 
-# ============================================================================
-# ИНИЦИАЛИЗАЦИЯ
-# ============================================================================
+log = setup_logger("app")
 
 app = Flask(__name__)
-log = setup_logger("bot")
 
-try:
-    config = AppConfig.from_env()
-    log_extra(log, "INFO", "Configuration loaded", port=config.port)
-except ValueError as e:
-    log.error(f"Configuration error: {str(e)}", exc_info=True)
-    raise
+# Загрузка конфигурации из переменных окружения
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
 
-# Инициализируем клиент OpenRouter
-try:
-    extra_headers = {}
-    if config.openrouter.site_url:
-        extra_headers["HTTP-Referer"] = config.openrouter.site_url
-    if config.openrouter.site_name:
-        extra_headers["X-Title"] = config.openrouter.site_name
+# Переменные для подключения Power BI REST API
+PBI_TENANT_ID = os.getenv("PBI_TENANT_ID")
+PBI_CLIENT_ID = os.getenv("PBI_CLIENT_ID")
+PBI_CLIENT_SECRET = os.getenv("PBI_CLIENT_SECRET")
+PBI_DATASET_ID = os.getenv("PBI_DATASET_ID")
 
-    openai_client = OpenAI(
-        base_url=config.openrouter.base_url,
-        api_key=config.openrouter.api_key,
-        timeout=config.openrouter.timeout,
-    )
-    
-    log_extra(
-        log,
-        "INFO",
-        "OpenRouter client initialized",
-        model=config.openrouter.model,
-    )
-except Exception as e:
-    log.error(f"Failed to initialize OpenRouter client: {str(e)}", exc_info=True)
-    raise
+# Инициализация клиентов
+openai_client = OpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url="[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)"
+)
 
-# Инициализируем сервисы
-try:
-    router_service = RouterService(openai_client, config.openrouter.model)
-    formatter_service = FormatterService(
-        openai_client,
-        config.openrouter.model,
-        STORE_CODE_MAP,
-    )
-    telegram_client = TelegramClient(config.telegram.bot_token)
-    
-    log.info("Services initialized successfully")
-except Exception as e:
-    log.error(f"Failed to initialize services: {str(e)}", exc_info=True)
-    raise
-
-# ============================================================================
-# КЛАВИАТУРЫ TELEGRAM
-# ============================================================================
-
-def get_main_reply_keyboard():
-    """Главное меню бота."""
-    return {
-        "keyboard": [
-            [{"text": "📊 Продажи"}, {"text": "💸 Расходы"}],
-            [{"text": "💼 Зарплата"}, {"text": "🎯 План и Итоги"}]
-        ],
-        "resize_keyboard": True,
-        "is_persistent": True
-    }
+router_service = RouterService(openai_client=openai_client, model=OPENROUTER_MODEL)
+formatter_service = FormatterService(
+    openai_client=openai_client,
+    model=OPENROUTER_MODEL,
+    store_replacements=KNOWN_STORES
+)
 
 
-def get_sales_inline_keyboard():
-    """Меню для продаж."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🏬 По магазинам (сегодня)", "callback_data": "sales_by_store_today"},
-                {"text": "📅 За вчера", "callback_data": "sales_yesterday"}
-            ],
-            [
-                {"text": "📆 Этот месяц", "callback_data": "sales_month"},
-                {"text": "📍 Пионерский", "callback_data": "sales_pionersky"}
-            ],
-            [
-                {"text": "📍 Озеро", "callback_data": "sales_ozero"},
-                {"text": "📍 Утриш", "callback_data": "sales_utrish"},
-                {"text": "📍 Джемете", "callback_data": "sales_dzhemete"}
-            ]
-        ]
-    }
-
-
-def get_expenses_inline_keyboard():
-    """Меню для расходов."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🏬 По магазинам (месяц)", "callback_data": "expenses_by_store"},
-                {"text": "📂 По статьям", "callback_data": "expenses_by_category"}
-            ],
-            [
-                {"text": "📅 За сегодня", "callback_data": "expenses_today"},
-                {"text": "📆 За этот месяц", "callback_data": "expenses_month"}
-            ]
-        ]
-    }
-
-
-def get_salary_inline_keyboard():
-    """Меню для зарплаты."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🧮 Расчётный период", "callback_data": "salary_period"},
-                {"text": "👥 По сотрудникам", "callback_data": "salary_by_emp"}
-            ]
-        ]
-    }
-
-
-def get_plans_inline_keyboard():
-    """Меню для плана и итогов."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "🎯 Выполнение плана", "callback_data": "plan_status"},
-                {"text": "🍷 Топ товаров за день", "callback_data": "top_products_today"}
-            ]
-        ]
-    }
-
-# ============================================================================
-# ПРОВЕРКА АВТОРИЗАЦИИ
-# ============================================================================
-
-def check_auth() -> bool:
-    """Проверяет аутентификацию webhook'а."""
-    if not config.telegram.webhook_secret:
+def check_auth(req: request) -> bool:
+    """Проверка авторизации входящего вебхука."""
+    if not WEBHOOK_SECRET:
         return True
-    
-    header_secret = request.headers.get("X-Webhook-Secret", "")
-    return hmac.compare_digest(header_secret, config.telegram.webhook_secret)
+    header_secret = req.headers.get("X-Webhook-Secret")
+    return header_secret == WEBHOOK_SECRET
 
-# ============================================================================
-# АВТОМАТИЧЕСКИЕ ОТЧЕТЫ
-# ============================================================================
 
-def send_hourly_stats():
-    """Отправляет часовой отчет по продажам."""
+def send_telegram_message(chat_id: str, text: str) -> bool:
+    """Отправка сообщения пользователю через Telegram Bot API."""
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
     try:
-        log.info("Starting hourly stats report...")
-        
-        result = router_service.route_question("продажи по магазинам за сегодня")
-        
-        if result.dax:
-            telegram_client.send_message(
-                config.telegram.chat_id,
-                "📊 Отчет по продажам за час подготовлен.",
-                get_sales_inline_keyboard()
-            )
-            log_extra(log, "INFO", "Hourly stats sent", chat_id=config.telegram.chat_id)
-        else:
-            log.warning("Router didn't return DAX for hourly stats")
-    
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        return True
     except Exception as e:
-        log.error(f"Error in send_hourly_stats: {str(e)}", exc_info=True)
+        log.error(f"Ошибка отправки сообщения в Telegram: {str(e)}")
+        # Резервная попытка отправки без parse_mode в случае ошибки разметки
+        payload.pop("parse_mode", None)
+        try:
+            requests.post(url, json=payload, timeout=10)
+            return True
+        except Exception as ex:
+            log.error(f"Критическая ошибка отправки в Telegram: {str(ex)}")
+            return False
 
-# ============================================================================
-# ЗАПУСК SCHEDULER
-# ============================================================================
 
-scheduler = BackgroundScheduler(timezone="Europe/Moscow")
-scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
-scheduler.start()
+def execute_powerbi_dax(dax_query: str) -> dict:
+    """Выполнение DAX-запроса через Power BI REST API."""
+    if not all([PBI_TENANT_ID, PBI_CLIENT_ID, PBI_CLIENT_SECRET, PBI_DATASET_ID]):
+        log.warning("Переменные Power BI API не заполнены в Environment")
+        return {"error": "Power BI credentials missing"}
 
-# Отправляем сообщение о запуске при старте
-try:
-    if config.telegram.chat_id:
-        telegram_client.send_message(
-            config.telegram.chat_id,
-            "🔔 Сервис успешно запущен! Меню подключено.",
-            get_main_reply_keyboard()
-        )
-except Exception as e:
-    log.error(f"Failed to send startup message: {str(e)}")
+    try:
+        # 1. Получение OAuth2 токена Azure AD
+        token_url = f"[https://login.microsoftonline.com/](https://login.microsoftonline.com/){PBI_TENANT_ID}/oauth2/v2.0/token"
+        token_data = {
+            "grant_type": "client_credentials",
+            "client_id": PBI_CLIENT_ID,
+            "client_secret": PBI_CLIENT_SECRET,
+            "scope": "[https://analysis.windows.net/powerbi/api/.default](https://analysis.windows.net/powerbi/api/.default)"
+        }
+        
+        token_res = requests.post(token_url, data=token_data, timeout=10)
+        token_res.raise_for_status()
+        access_token = token_res.json().get("access_token")
 
-# ============================================================================
-# API ЭНДПОИНТЫ
-# ============================================================================
+        # 2. Выполнение запроса к датасету Power BI
+        pbi_url = f"[https://api.powerbi.com/v1.0/myorg/datasets/](https://api.powerbi.com/v1.0/myorg/datasets/){PBI_DATASET_ID}/executeQueries"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        body = {
+            "queries": [{"query": dax_query}],
+            "serializerSettings": {"includeNulls": True}
+        }
 
-@app.route("/health", methods=["GET"])
-def health():
-    """Healthcheck эндпоинт."""
-    return jsonify({
-        "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "powerbi-bot"
-    }), 200
+        pbi_res = requests.post(pbi_url, headers=headers, json=body, timeout=20)
+        pbi_res.raise_for_status()
+        return pbi_res.json()
+
+    except Exception as e:
+        log.error(f"Ошибка выполнения Power BI API: {str(e)}", exc_info=True)
+        return {"error": str(e)}
+
+
+@app.route("/", methods=["GET", "HEAD"])
+def healthcheck():
+    """Эндпоинт проверки работоспособности сервиса."""
+    return jsonify({"status": "ok", "service": "analytics-bot"}), 200
 
 
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
-    """Главный webhook для обработки сообщений из Telegram или Make."""
+    """Основной обработчик входящих сообщений."""
+    if not check_auth(request):
+        log.warning("Отклонен неавторизованный запрос")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
     
-    # Проверяем авторизацию
-    if not check_auth():
-        log_extra(log, "WARNING", "Unauthorized webhook request", ip=request.remote_addr)
-        return jsonify({"status": "error", "message": "Unauthorized"}), 401
-    
+    # Извлечение данных сообщения
+    message = data.get("message") or data.get("post_data", {})
+    if not message and "text" in data:
+        message = data
+
+    user_text = message.get("text", "").strip()
+    chat_id = str(message.get("chat", {}).get("id") or message.get("chat_id") or "")
+
+    if not user_text or not chat_id:
+        return jsonify({"status": "ignored", "reason": "Empty text or chat_id"}), 200
+
+    log.info(f"Получено сообщение: '{user_text}' от chat_id: {chat_id}")
+
     try:
-        data = request.get_json(force=True, silent=True) or {}
-    except Exception as e:
-        log.error(f"Failed to parse JSON: {str(e)}")
-        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
-    
-    # ========================================================================
-    # ОБРАБОТКА CALLBACK QUERIES (INLINE КНОПКИ)
-    # ========================================================================
-    
-    if "callback_query" in data:
-        try:
-            callback = data["callback_query"]
-            callback_id = callback.get("id")
-            chat_id = callback.get("message", {}).get("chat", {}).get("id")
-            action = callback.get("data", "")
-            
-            if not callback_id or not chat_id:
-                log.error("Invalid callback_query structure")
-                return jsonify({"status": "ok"})
-            
-            log_extra(
-                log,
-                "INFO",
-                "Callback query received",
-                chat_id=chat_id,
-                action=action,
+        # Шаг 1: Маршрутизация и получение DAX через RouterService
+        router_res = router_service.route_question(question=user_text)
+        log.info(f"Результат роутера: route={router_res.route}")
+
+        if router_res.route == "chat":
+            # Не требует обращения к базе данных
+            send_telegram_message(chat_id, router_res.message)
+            return jsonify({"status": "success", "route": "chat"}), 200
+
+        elif router_res.route == "powerbi":
+            # Шаг 2: Выполнение сгенерированного DAX в Power BI API
+            log.info(f"Выполнение DAX-запроса: {router_res.dax}")
+            pbi_result = execute_powerbi_dax(router_res.dax)
+
+            # Шаг 3: Передача сырых данных в FormatterService
+            formatter_res = formatter_service.format_answer(
+                question=user_text,
+                powerbi_result=pbi_result
             )
-            
-            # Ответим на callback
-            telegram_client.answer_callback_query(callback_id)
-            
-            # Маппируем actions на запросы
-            action_map = {
-                "sales_by_store_today": "Продажи по магазинам за сегодня",
-                "sales_yesterday": "Продажи за вчера по магазинам",
-                "sales_month": "Продажи за этот месяц по магазинам",
-                "sales_pionersky": "Продажи магазина Пионерский за сегодня",
-                "sales_ozero": "Продажи магазина Озеро за сегодня",
-                "sales_utrish": "Продажи магазина Утриш за сегодня",
-                "sales_dzhemete": "Продажи магазина Джемете за сегодня",
-                "expenses_by_store": "Расходы по магазинам за этот месяц",
-                "expenses_by_category": "Расходы по статьям за этот месяц",
-                "expenses_today": "Расходы за сегодня",
-                "expenses_month": "Расходы за этот месяц всего",
-                "salary_period": "Зарплата за текущий расчётный период",
-                "salary_by_emp": "Зарплата по сотрудникам за этот месяц",
-                "plan_status": "Выполнение плана по магазинам за сегодня",
-                "top_products_today": "Топ 5 продаваемых товаров за сегодня"
-            }
-            
-            user_text = action_map.get(action, "Продажи за сегодня")
-            
-            try:
-                routed = router_service.route_question(user_text)
-                reply_text = routed.message or f"DAX запрос:\n`{routed.dax}`"
-            except Exception as e:
-                log.error(f"Router error: {str(e)}")
-                reply_text = "❌ Ошибка при обработке запроса. Попробуйте позже."
-            
-            telegram_client.send_message(chat_id, reply_text)
-            return jsonify({"status": "ok"})
-        
-        except Exception as e:
-            log.error(f"Error processing callback_query: {str(e)}", exc_info=True)
-            return jsonify({"status": "ok"})
-    
-    # ========================================================================
-    # ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ
-    # ========================================================================
-    
-    if "message" in data:
-        try:
-            msg = data["message"]
-            chat_id = msg.get("chat", {}).get("id")
-            text = msg.get("text", "").strip()
-            
-            if not chat_id or not text:
-                return jsonify({"status": "ok"})
-            
-            log_extra(log, "INFO", "Message received", chat_id=chat_id, text=text[:50])
-            
-            # Обработка команд
-            if text == "/start":
-                telegram_client.send_message(
-                    chat_id,
-                    "Привет! Я аналитический бот. Выберите раздел меню ниже:",
-                    get_main_reply_keyboard()
-                )
-                return jsonify({"status": "ok"})
-            
-            if text == "📊 Продажи":
-                telegram_client.send_message(
-                    chat_id,
-                    "Выберите нужный отчет по продажам:",
-                    get_sales_inline_keyboard()
-                )
-                return jsonify({"status": "ok"})
-            
-            if text == "💸 Расходы":
-                telegram_client.send_message(
-                    chat_id,
-                    "Выберите нужный отчет по расходам:",
-                    get_expenses_inline_keyboard()
-                )
-                return jsonify({"status": "ok"})
-            
-            if text == "💼 Зарплата":
-                telegram_client.send_message(
-                    chat_id,
-                    "Выберите нужный отчет по зарплате:",
-                    get_salary_inline_keyboard()
-                )
-                return jsonify({"status": "ok"})
-            
-            if text == "🎯 План и Итоги":
-                telegram_client.send_message(
-                    chat_id,
-                    "Выберите нужный отчет по планам и итогам:",
-                    get_plans_inline_keyboard()
-                )
-                return jsonify({"status": "ok"})
-            
-            # Произвольный вопрос
-            try:
-                routed = router_service.route_question(text)
-                reply_text = routed.message or f"DAX запрос:\n`{routed.dax}`"
-            except Exception as e:
-                log.error(f"Router error: {str(e)}")
-                reply_text = "❌ Ошибка при обработке запроса. Попробуйте позже."
-            
-            telegram_client.send_message(chat_id, reply_text)
-            return jsonify({"status": "ok"})
-        
-        except Exception as e:
-            log.error(f"Error processing message: {str(e)}", exc_info=True)
-            return jsonify({"status": "ok"})
-    
-    return jsonify({"status": "ok"})
 
+            # Шаг 4: Отправка готового человекочитаемого ответа в Telegram
+            send_telegram_message(chat_id, formatter_res.reply)
+            return jsonify({"status": "success", "route": "powerbi"}), 200
 
-@app.errorhandler(404)
-def not_found(error):
-    """404 handler."""
-    return jsonify({"status": "error", "message": "Not found"}), 404
+        else:
+            send_telegram_message(chat_id, "Не удалось определить тип запроса.")
+            return jsonify({"status": "unknown_route"}), 200
 
+    except Exception as e:
+        log.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=True)
+        send_telegram_message(chat_id, "⚠️ Произошла ошибка при получении данных. Попробуйте позже.")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.errorhandler(500)
-def internal_error(error):
-    """500 handler."""
-    log.error(f"Internal server error: {str(error)}", exc_info=True)
-    return jsonify({"status": "error", "message": "Internal server error"}), 500
-
-# ============================================================================
-# ЗАПУСК ПРИЛОЖЕНИЯ
-# ============================================================================
 
 if __name__ == "__main__":
-    log_extra(log, "INFO", "Starting bot server", port=config.port, debug=config.debug)
-    app.run(host="0.0.0.0", port=config.port, debug=config.debug)
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
