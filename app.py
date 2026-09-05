@@ -3,14 +3,6 @@
 """
 PowerBI AI-ассистент — Telegram бот для аналитики.
 Улучшенная версия с модульной архитектурой и полной интеграцией Power BI API.
-
-Архитектура:
-- config.py: конфигурация из переменных окружения
-- logger.py: структурированное JSON логирование
-- utils.py: вспомогательные функции
-- services.py: бизнес-логика (RouterService, FormatterService)
-- telegram_client.py: работа с Telegram API
-- schema.py: схема данных Power BI
 """
 
 import os
@@ -25,7 +17,7 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# Импортируем наши модули
+# Импортируем модули проекта
 from config import AppConfig
 from logger import setup_logger, log_extra
 from utils import clean_token, extract_json_from_text
@@ -47,7 +39,7 @@ except ValueError as e:
     log.error(f"Configuration error: {str(e)}", exc_info=True)
     raise
 
-# Инициализируем клиент OpenRouter
+# Инициализация OpenAI / OpenRouter
 try:
     extra_headers = {}
     if config.openrouter.site_url:
@@ -71,7 +63,7 @@ except Exception as e:
     log.error(f"Failed to initialize OpenRouter client: {str(e)}", exc_info=True)
     raise
 
-# Инициализируем сервисы
+# Инициализация сервисов
 try:
     router_service = RouterService(openai_client, config.openrouter.model)
     formatter_service = FormatterService(
@@ -168,22 +160,21 @@ def get_plans_inline_keyboard():
 
 def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
     """Выполнение DAX-запроса через Power BI REST API."""
-    tenant_id = os.getenv("PBI_TENANT_ID")
-    client_id = os.getenv("PBI_CLIENT_ID")
-    client_secret = os.getenv("PBI_CLIENT_SECRET")
-    dataset_id = os.getenv("PBI_DATASET_ID")
+    pbi_cfg = config.powerbi
 
-    if not all([tenant_id, client_id, client_secret, dataset_id]):
-        log.warning("Power BI API environment variables are not fully configured")
-        return {"error": "Power BI credentials missing"}
+    # Проверка наличия всех ключей
+    if not pbi_cfg.is_valid:
+        missing = ", ".join(pbi_cfg.get_missing_vars())
+        log.warning(f"Power BI API environment variables missing: {missing}")
+        return {"error": f"Отсутствуют переменные окружения: {missing}"}
 
     try:
         # 1. Получение OAuth2 токена доступа Azure AD
-        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        token_url = f"https://login.microsoftonline.com/{pbi_cfg.tenant_id}/oauth2/v2.0/token"
         token_data = {
             "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": pbi_cfg.client_id,
+            "client_secret": pbi_cfg.client_secret,
             "scope": "https://analysis.windows.net/powerbi/api/.default"
         }
         
@@ -192,7 +183,7 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         access_token = token_res.json().get("access_token")
 
         # 2. Выполнение DAX-запроса в датасет Power BI
-        pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{dataset_id}/executeQueries"
+        pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{pbi_cfg.dataset_id}/executeQueries"
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
@@ -206,6 +197,10 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         pbi_res.raise_for_status()
         return pbi_res.json()
 
+    except requests.exceptions.HTTPError as http_err:
+        err_msg = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        log.error(f"Power BI API HTTP Error: {err_msg}")
+        return {"error": err_msg}
     except Exception as e:
         log.error(f"Error executing Power BI REST API query: {str(e)}", exc_info=True)
         return {"error": str(e)}
@@ -290,7 +285,7 @@ scheduler = BackgroundScheduler(timezone="Europe/Moscow")
 scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
 scheduler.start()
 
-# Отправляем сообщение о запуске при старте
+# Отправка стартового сообщения
 try:
     if config.telegram.chat_id:
         telegram_client.send_message(
@@ -317,9 +312,8 @@ def health():
 
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
-    """Главный webhook для обработки сообщений из Telegram или Make."""
+    """Главный webhook для обработки сообщений из Telegram."""
     
-    # Проверяем авторизацию
     if not check_auth():
         log_extra(log, "WARNING", "Unauthorized webhook request", ip=request.remote_addr)
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
@@ -330,10 +324,7 @@ def telegram_webhook():
         log.error(f"Failed to parse JSON: {str(e)}")
         return jsonify({"status": "error", "message": "Invalid JSON"}), 400
     
-    # ========================================================================
-    # ОБРАБОТКА CALLBACK QUERIES (INLINE КНОПКИ)
-    # ========================================================================
-    
+    # Обработка Inline-кнопок (Callback queries)
     if "callback_query" in data:
         try:
             callback = data["callback_query"]
@@ -345,18 +336,9 @@ def telegram_webhook():
                 log.error("Invalid callback_query structure")
                 return jsonify({"status": "ok"})
             
-            log_extra(
-                log,
-                "INFO",
-                "Callback query received",
-                chat_id=chat_id,
-                action=action,
-            )
-            
-            # Отвечаем на callback в Telegram API
+            log_extra(log, "INFO", "Callback query received", chat_id=chat_id, action=action)
             telegram_client.answer_callback_query(callback_id)
             
-            # Маппируем actions на человекочитаемые запросы
             action_map = {
                 "sales_by_store_today": "Продажи по магазинам за сегодня",
                 "sales_yesterday": "Продажи за вчера по магазинам",
@@ -376,8 +358,6 @@ def telegram_webhook():
             }
             
             user_text = action_map.get(action, "Продажи за сегодня")
-            
-            # Запускаем полный цикл обработки через Power BI API и FormatterService
             process_analytics_query(chat_id, user_text)
             return jsonify({"status": "ok"})
         
@@ -385,10 +365,7 @@ def telegram_webhook():
             log.error(f"Error processing callback_query: {str(e)}", exc_info=True)
             return jsonify({"status": "ok"})
     
-    # ========================================================================
-    # ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ
-    # ========================================================================
-    
+    # Обработка текстовых сообщений
     if "message" in data:
         try:
             msg = data["message"]
@@ -400,7 +377,6 @@ def telegram_webhook():
             
             log_extra(log, "INFO", "Message received", chat_id=chat_id, text=text[:50])
             
-            # Обработка главных команд и клавиатур меню
             if text == "/start":
                 telegram_client.send_message(
                     chat_id,
@@ -441,7 +417,6 @@ def telegram_webhook():
                 )
                 return jsonify({"status": "ok"})
             
-            # Произвольный текстовый вопрос или аналитический запрос
             process_analytics_query(chat_id, text)
             return jsonify({"status": "ok"})
         
@@ -454,13 +429,11 @@ def telegram_webhook():
 
 @app.errorhandler(404)
 def not_found(error):
-    """404 handler."""
     return jsonify({"status": "error", "message": "Not found"}), 404
 
 
 @app.errorhandler(500)
 def internal_error(error):
-    """500 handler."""
     log.error(f"Internal server error: {str(error)}", exc_info=True)
     return jsonify({"status": "error", "message": "Internal server error"}), 500
 
