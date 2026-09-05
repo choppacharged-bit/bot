@@ -37,10 +37,11 @@ class PowerBIConfig:
     client_id: str
     client_secret: str
     dataset_id: str
+    webhook_url: Optional[str] = None
 
     @property
-    def is_valid(self) -> bool:
-        """Проверяет, что все 4 ключевые переменные заполнены."""
+    def is_valid_direct(self) -> bool:
+        """Проверяет наличие всех 4 ключей для прямого подключения через Azure."""
         return bool(
             self.tenant_id.strip()
             and self.client_id.strip()
@@ -48,8 +49,13 @@ class PowerBIConfig:
             and self.dataset_id.strip()
         )
 
+    @property
+    def has_webhook(self) -> bool:
+        """Проверяет наличие Webhook URL (например, Make.com)."""
+        return bool(self.webhook_url and self.webhook_url.strip())
+
     def get_missing_vars(self) -> List[str]:
-        """Возвращает список отсутствующих переменных для информативного логирования."""
+        """Возвращает список отсутствующих переменных."""
         missing = []
         if not self.tenant_id.strip():
             missing.append("PBI_TENANT_ID")
@@ -93,12 +99,12 @@ class AppConfig:
             site_name=os.getenv("OPENROUTER_SITE_NAME"),
         )
 
-        # Поддерживаем два стиля именования: PBI_* и POWERBI_*
         powerbi = PowerBIConfig(
             tenant_id=(os.getenv("PBI_TENANT_ID") or os.getenv("POWERBI_TENANT_ID") or "").strip(),
             client_id=(os.getenv("PBI_CLIENT_ID") or os.getenv("POWERBI_CLIENT_ID") or "").strip(),
             client_secret=(os.getenv("PBI_CLIENT_SECRET") or os.getenv("POWERBI_CLIENT_SECRET") or "").strip(),
             dataset_id=(os.getenv("PBI_DATASET_ID") or os.getenv("POWERBI_DATASET_ID") or "").strip(),
+            webhook_url=(os.getenv("PBI_WEBHOOK_URL") or os.getenv("MAKE_WEBHOOK_URL") or "").strip(),
         )
 
         return cls(
