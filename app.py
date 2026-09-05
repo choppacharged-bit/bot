@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 PowerBI AI-ассистент — Telegram бот для аналитики.
-Улучшенная версия с модульной архитектурой и полной интеграцией Power BI API.
+Поддерживает работу как через прямой Power BI REST API, так и через Make.com Webhook.
 """
 
 import os
@@ -155,21 +155,45 @@ def get_plans_inline_keyboard():
     }
 
 # ============================================================================
-# ИНТЕГРАЦИЯ POWER BI REST API
+# ВЫПОЛНЕНИЕ DAX ЗАПРОСА (MAKE WEBHOOK или REST API)
 # ============================================================================
 
 def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
-    """Выполнение DAX-запроса через Power BI REST API."""
+    """
+    Выполнение DAX-запроса.
+    1. Если задан PBI_WEBHOOK_URL (Make.com), запрос уходит на Webhook.
+    2. Если нет Webhook, используется прямой Power BI REST API.
+    """
     pbi_cfg = config.powerbi
 
-    # Проверка наличия всех ключей
-    if not pbi_cfg.is_valid:
+    # Вариант 1: Вызов через Make.com / Прокси Webhook
+    if pbi_cfg.has_webhook:
+        try:
+            log.info("Executing Power BI query via Make.com Webhook...")
+            payload = {
+                "dax": dax_query,
+                "query": dax_query
+            }
+            res = requests.post(pbi_cfg.webhook_url, json=payload, timeout=25)
+            res.raise_for_status()
+            
+            try:
+                return res.json()
+            except Exception:
+                return {"results": [{"tables": [{"rows": [{"value": res.text}]}]}]}
+
+        except Exception as e:
+            log.error(f"Error executing via Webhook: {str(e)}", exc_info=True)
+            return {"error": f"Ошибка Webhook Make.com: {str(e)}"}
+
+    # Вариант 2: Прямой REST API через Azure AD
+    if not pbi_cfg.is_valid_direct:
         missing = ", ".join(pbi_cfg.get_missing_vars())
-        log.warning(f"Power BI API environment variables missing: {missing}")
-        return {"error": f"Отсутствуют переменные окружения: {missing}"}
+        log.warning(f"Power BI credentials missing: {missing}")
+        return {"error": f"Отсутствуют переменные окружения: {missing} (или PBI_WEBHOOK_URL)"}
 
     try:
-        # 1. Получение OAuth2 токена доступа Azure AD
+        # 1. Токен Azure AD
         token_url = f"https://login.microsoftonline.com/{pbi_cfg.tenant_id}/oauth2/v2.0/token"
         token_data = {
             "grant_type": "client_credentials",
@@ -182,7 +206,7 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         token_res.raise_for_status()
         access_token = token_res.json().get("access_token")
 
-        # 2. Выполнение DAX-запроса в датасет Power BI
+        # 2. Выполнение DAX в Power BI REST API
         pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{pbi_cfg.dataset_id}/executeQueries"
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -216,25 +240,25 @@ def process_analytics_query(
 ) -> None:
     """Сквозная функция обработки пользовательского запроса."""
     try:
-        # Шаг 1: Маршрутизация и генерация DAX через RouterService
+        # Шаг 1: Маршрутизация и генерация DAX
         routed = router_service.route_question(user_text)
         log_extra(log, "INFO", "Router finished", route=routed.route, dax_present=bool(routed.dax))
 
         if routed.route == "powerbi" and routed.dax:
-            # Шаг 2: Выполнение DAX в Power BI API
+            # Шаг 2: Выполнение DAX (через Make или REST API)
             pbi_result = execute_powerbi_dax(routed.dax)
 
             if "error" in pbi_result:
                 reply_text = f"⚠️ Ошибка выполнения запроса в Power BI: {pbi_result['error']}"
             else:
-                # Шаг 3: Форматирование данных через FormatterService
+                # Шаг 3: Форматирование данных
                 formatted = formatter_service.format_answer(user_text, pbi_result)
                 reply_text = formatted.reply
         else:
-            # Обычный диалоговый ответ
+            # Диалоговый ответ
             reply_text = routed.message or "Не удалось обработать запрос."
 
-        # Шаг 4: Отправка итогового сообщения пользователю
+        # Шаг 4: Отправка ответа в Telegram
         telegram_client.send_message(chat_id, reply_text, reply_markup=reply_markup)
 
     except Exception as e:
@@ -302,7 +326,6 @@ except Exception as e:
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Healthcheck эндпоинт."""
     return jsonify({
         "status": "ok",
         "timestamp": datetime.utcnow().isoformat(),
@@ -324,7 +347,7 @@ def telegram_webhook():
         log.error(f"Failed to parse JSON: {str(e)}")
         return jsonify({"status": "error", "message": "Invalid JSON"}), 400
     
-    # Обработка Inline-кнопок (Callback queries)
+    # Обработка Inline-кнопок
     if "callback_query" in data:
         try:
             callback = data["callback_query"]
