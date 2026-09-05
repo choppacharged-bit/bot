@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 PowerBI AI-ассистент — Telegram бот для аналитики.
-Поддерживает работу как через прямой Power BI REST API, так и через Make.com Webhook.
+Поддерживает работу через Make.com Webhook / Power BI REST API.
+Содержит статические DAX-шаблоны для кнопок меню во избежание галлюцинаций LLM.
 """
 
 import os
@@ -79,11 +80,208 @@ except Exception as e:
     raise
 
 # ============================================================================
+# СТАТИЧЕСКИЕ DAX ШАБЛОНЫ ДЛЯ КНОПОК (100% ДЕТЕРМИНИРОВАННОСТЬ)
+# ============================================================================
+
+STATIC_DAX_MAP: Dict[str, Dict[str, str]] = {
+    "sales_by_store_today": {
+        "title": "Продажи по магазинам за сегодня",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Валовая приыбль'[МагазинКод],
+    FILTER('Календарь', 'Календарь'[Дата] = TODAY()),
+    "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+    "Количество_чеков", DISTINCTCOUNT('Валовая приыбль'[НомерЧека])
+)
+"""
+    },
+    "sales_yesterday": {
+        "title": "Продажи за вчера по магазинам",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Валовая приыбль'[МагазинКод],
+    FILTER('Календарь', 'Календарь'[Дата] = TODAY() - 1),
+    "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+    "Количество_чеков", DISTINCTCOUNT('Валовая приыбль'[НомерЧека])
+)
+"""
+    },
+    "sales_month": {
+        "title": "Продажи за этот месяц по магазинам",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Валовая приыбль'[МагазинКод],
+    DATESMTD('Календарь'[Дата]),
+    "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+    "Валовая_Прибыль", SUM('Валовая приыбль'[ВаловаяПрибыль])
+)
+"""
+    },
+    "sales_pionersky": {
+        "title": "Продажи магазина Пионерский за сегодня",
+        "dax": """
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Валовая приыбль'[МагазинКод],
+        "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+        "Количество_чеков", DISTINCTCOUNT('Валовая приыбль'[НомерЧека])
+    ),
+    'Валовая приыбль'[МагазинКод] = "ОП_5_Анапа",
+    'Календарь'[Дата] = TODAY()
+)
+"""
+    },
+    "sales_ozero": {
+        "title": "Продажи магазина Озеро за сегодня",
+        "dax": """
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Валовая приыбль'[МагазинКод],
+        "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+        "Количество_чеков", DISTINCTCOUNT('Валовая приыбль'[НомерЧека])
+    ),
+    'Валовая приыбль'[МагазинКод] = "Гебея озеро",
+    'Календарь'[Дата] = TODAY()
+)
+"""
+    },
+    "sales_utrish": {
+        "title": "Продажи магазина Утриш за сегодня",
+        "dax": """
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Валовая приыбль'[МагазинКод],
+        "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+        "Количество_чеков", DISTINCTCOUNT('Валовая приыбль'[НомерЧека])
+    ),
+    'Валовая приыбль'[МагазинКод] = "ОП_8_Утриш",
+    'Календарь'[Дата] = TODAY()
+)
+"""
+    },
+    "sales_dzhemete": {
+        "title": "Продажи магазина Джемете за сегодня",
+        "dax": """
+EVALUATE
+CALCULATETABLE(
+    SUMMARIZECOLUMNS(
+        'Валовая приыбль'[МагазинКод],
+        "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+        "Количество_чеков", DISTINCTCOUNT('Валовая приыбль'[НомерЧека])
+    ),
+    'Валовая приыбль'[МагазинКод] = "ОП_1 Анапа Ленинградская",
+    'Календарь'[Дата] = TODAY()
+)
+"""
+    },
+    "expenses_by_store": {
+        "title": "Расходы по магазинам за этот месяц",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Расходы'[МагазинКод],
+    DATESMTD('Календарь'[Дата]),
+    "Сумма_Расходов", SUM('Расходы'[Сумма])
+)
+"""
+    },
+    "expenses_by_category": {
+        "title": "Расходы по статьям за этот месяц",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Расходы'[СтатьяРасходов],
+    DATESMTD('Календарь'[Дата]),
+    "Сумма_Расходов", SUM('Расходы'[Сумма])
+)
+"""
+    },
+    "expenses_today": {
+        "title": "Расходы за сегодня",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Расходы'[СтатьяРасходов],
+    FILTER('Календарь', 'Календарь'[Дата] = TODAY()),
+    "Сумма_Расходов", SUM('Расходы'[Сумма])
+)
+"""
+    },
+    "expenses_month": {
+        "title": "Расходы за этот месяц всего",
+        "dax": """
+EVALUATE
+CALCULATE TABLE(
+    ROW("Всего_Расходов", SUM('Расходы'[Сумма])),
+    DATESMTD('Календарь'[Дата])
+)
+"""
+    },
+    "salary_period": {
+        "title": "Зарплата за текущий расчётный период",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Сотруник'[ФИО],
+    'РасчетНачислений'[МагазинКод],
+    DATESMTD('Календарь'[Дата]),
+    "Начислено", SUM('РасчетНачислений'[Сумма])
+)
+"""
+    },
+    "salary_by_emp": {
+        "title": "Зарплата по сотрудникам за этот месяц",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Сотруник'[ФИО],
+    DATESMTD('Календарь'[Дата]),
+    "Начислено", SUM('РасчетНачислений'[Сумма])
+)
+"""
+    },
+    "plan_status": {
+        "title": "Выполнение плана по магазинам за сегодня",
+        "dax": """
+EVALUATE
+SUMMARIZECOLUMNS(
+    'Валовая приыбль'[МагазинКод],
+    FILTER('Календарь', 'Календарь'[Дата] = TODAY()),
+    "Факт_Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+    "План_Выручка", SUM('Планы'[ПланСумма])
+)
+"""
+    },
+    "top_products_today": {
+        "title": "Топ 5 продаваемых товаров за сегодня",
+        "dax": """
+EVALUATE
+TOPN(
+    5,
+    SUMMARIZECOLUMNS(
+        'Валовая приыбль'[Номенклатура],
+        FILTER('Календарь', 'Календарь'[Дата] = TODAY()),
+        "Выручка", SUM('Валовая приыбль'[СуммаПродажи]),
+        "Количество", SUM('Валовая приыбль'[Количество])
+    ),
+    [Выручка],
+    DESC
+)
+"""
+    }
+}
+
+# ============================================================================
 # КЛАВИАТУРЫ TELEGRAM
 # ============================================================================
 
 def get_main_reply_keyboard():
-    """Главное меню бота."""
     return {
         "keyboard": [
             [{"text": "📊 Продажи"}, {"text": "💸 Расходы"}],
@@ -95,7 +293,6 @@ def get_main_reply_keyboard():
 
 
 def get_sales_inline_keyboard():
-    """Меню для продаж."""
     return {
         "inline_keyboard": [
             [
@@ -116,7 +313,6 @@ def get_sales_inline_keyboard():
 
 
 def get_expenses_inline_keyboard():
-    """Меню для расходов."""
     return {
         "inline_keyboard": [
             [
@@ -132,7 +328,6 @@ def get_expenses_inline_keyboard():
 
 
 def get_salary_inline_keyboard():
-    """Меню для зарплаты."""
     return {
         "inline_keyboard": [
             [
@@ -144,7 +339,6 @@ def get_salary_inline_keyboard():
 
 
 def get_plans_inline_keyboard():
-    """Меню для плана и итогов."""
     return {
         "inline_keyboard": [
             [
@@ -155,26 +349,31 @@ def get_plans_inline_keyboard():
     }
 
 # ============================================================================
-# ВЫПОЛНЕНИЕ DAX ЗАПРОСА (MAKE WEBHOOK или REST API)
+# ВЫПОЛНЕНИЕ DAX ЗАПРОСА С ДЕТАЛЬНЫМ ЛОГИРОВАНИЕМ
 # ============================================================================
 
 def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
-    """
-    Выполнение DAX-запроса.
-    1. Если задан PBI_WEBHOOK_URL (Make.com), запрос уходит на Webhook.
-    2. Если нет Webhook, используется прямой Power BI REST API.
-    """
-    pbi_cfg = config.powerbi
+    """Выполнение DAX-запроса через Webhook Make или Azure REST API."""
+    webhook_url = (
+        os.getenv("PBI_WEBHOOK_URL") 
+        or os.getenv("MAKE_WEBHOOK_URL") 
+        or config.powerbi.webhook_url 
+        or ""
+    ).strip()
 
-    # Вариант 1: Вызов через Make.com / Прокси Webhook
-    if pbi_cfg.has_webhook:
+    log.info(f"Executing DAX payload:\n{dax_query.strip()}")
+
+    # 1. Запрос через Make Webhook
+    if webhook_url:
         try:
-            log.info("Executing Power BI query via Make.com Webhook...")
+            log.info(f"Sending DAX to Webhook: {webhook_url[:35]}...")
             payload = {
                 "dax": dax_query,
                 "query": dax_query
             }
-            res = requests.post(pbi_cfg.webhook_url, json=payload, timeout=25)
+            res = requests.post(webhook_url, json=payload, timeout=25)
+            
+            log.info(f"PowerBI Webhook raw response (HTTP {res.status_code}): {res.text[:800]}")
             res.raise_for_status()
             
             try:
@@ -186,19 +385,32 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
             log.error(f"Error executing via Webhook: {str(e)}", exc_info=True)
             return {"error": f"Ошибка Webhook Make.com: {str(e)}"}
 
-    # Вариант 2: Прямой REST API через Azure AD
-    if not pbi_cfg.is_valid_direct:
-        missing = ", ".join(pbi_cfg.get_missing_vars())
-        log.warning(f"Power BI credentials missing: {missing}")
-        return {"error": f"Отсутствуют переменные окружения: {missing} (или PBI_WEBHOOK_URL)"}
+    # 2. Прямой REST API через Azure AD
+    tenant_id = (os.getenv("PBI_TENANT_ID") or os.getenv("POWERBI_TENANT_ID") or config.powerbi.tenant_id or "").strip()
+    client_id = (os.getenv("PBI_CLIENT_ID") or os.getenv("POWERBI_CLIENT_ID") or config.powerbi.client_id or "").strip()
+    client_secret = (os.getenv("PBI_CLIENT_SECRET") or os.getenv("POWERBI_CLIENT_SECRET") or config.powerbi.client_secret or "").strip()
+    dataset_id = (os.getenv("PBI_DATASET_ID") or os.getenv("POWERBI_DATASET_ID") or config.powerbi.dataset_id or "").strip()
+
+    missing = []
+    if not tenant_id:
+        missing.append("PBI_TENANT_ID")
+    if not client_id:
+        missing.append("PBI_CLIENT_ID")
+    if not client_secret:
+        missing.append("PBI_CLIENT_SECRET")
+    if not dataset_id:
+        missing.append("PBI_DATASET_ID")
+
+    if missing:
+        log.warning(f"Power BI credentials missing: {', '.join(missing)}")
+        return {"error": f"Отсутствуют переменные окружения: {', '.join(missing)} (или PBI_WEBHOOK_URL)"}
 
     try:
-        # 1. Токен Azure AD
-        token_url = f"https://login.microsoftonline.com/{pbi_cfg.tenant_id}/oauth2/v2.0/token"
+        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
         token_data = {
             "grant_type": "client_credentials",
-            "client_id": pbi_cfg.client_id,
-            "client_secret": pbi_cfg.client_secret,
+            "client_id": client_id,
+            "client_secret": client_secret,
             "scope": "https://analysis.windows.net/powerbi/api/.default"
         }
         
@@ -206,8 +418,7 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         token_res.raise_for_status()
         access_token = token_res.json().get("access_token")
 
-        # 2. Выполнение DAX в Power BI REST API
-        pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{pbi_cfg.dataset_id}/executeQueries"
+        pbi_url = f"https://api.powerbi.com/v1.0/myorg/datasets/{dataset_id}/executeQueries"
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
@@ -218,6 +429,7 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         }
 
         pbi_res = requests.post(pbi_url, headers=headers, json=body, timeout=20)
+        log.info(f"PowerBI Direct API raw response (HTTP {pbi_res.status_code}): {pbi_res.text[:800]}")
         pbi_res.raise_for_status()
         return pbi_res.json()
 
@@ -230,35 +442,53 @@ def execute_powerbi_dax(dax_query: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 # ============================================================================
-# ЕДИНЫЙ КОНВЕЙЕР ОБРАБОТКИ ЗАПРОСОВ
+# ОБРАБОТКА ЗАПРОСОВ (ДИНАМИЧЕСКИЕ И СТАЦИОНАРНЫЕ)
 # ============================================================================
+
+def process_static_action(chat_id: str, action_key: str) -> None:
+    """Выполнение захардкоженного DAX-запроса для кнопок меню."""
+    action_info = STATIC_DAX_MAP.get(action_key)
+    if not action_info:
+        log.error(f"Unknown static action key: {action_key}")
+        telegram_client.send_message(chat_id, "⚠️ Выбран неизвестный отчет.")
+        return
+
+    title = action_info["title"]
+    dax_query = action_info["dax"]
+
+    log_extra(log, "INFO", "Executing static menu action", action=action_key, title=title)
+    pbi_result = execute_powerbi_dax(dax_query)
+
+    if "error" in pbi_result:
+        reply_text = f"⚠️ Ошибка выполнения отчета '{title}':\n{pbi_result['error']}"
+    else:
+        formatted = formatter_service.format_answer(title, pbi_result)
+        reply_text = formatted.reply
+
+    telegram_client.send_message(chat_id, reply_text)
+
 
 def process_analytics_query(
     chat_id: str,
     user_text: str,
     reply_markup: Optional[Dict[str, Any]] = None
 ) -> None:
-    """Сквозная функция обработки пользовательского запроса."""
+    """Обработка свободного текстового запроса через GPT-роутер."""
     try:
-        # Шаг 1: Маршрутизация и генерация DAX
         routed = router_service.route_question(user_text)
         log_extra(log, "INFO", "Router finished", route=routed.route, dax_present=bool(routed.dax))
 
         if routed.route == "powerbi" and routed.dax:
-            # Шаг 2: Выполнение DAX (через Make или REST API)
             pbi_result = execute_powerbi_dax(routed.dax)
 
             if "error" in pbi_result:
                 reply_text = f"⚠️ Ошибка выполнения запроса в Power BI: {pbi_result['error']}"
             else:
-                # Шаг 3: Форматирование данных
                 formatted = formatter_service.format_answer(user_text, pbi_result)
                 reply_text = formatted.reply
         else:
-            # Диалоговый ответ
             reply_text = routed.message or "Не удалось обработать запрос."
 
-        # Шаг 4: Отправка ответа в Telegram
         telegram_client.send_message(chat_id, reply_text, reply_markup=reply_markup)
 
     except Exception as e:
@@ -270,46 +500,31 @@ def process_analytics_query(
         )
 
 # ============================================================================
-# ПРОВЕРКА АВТОРИЗАЦИИ
+# АВТОРИЗАЦИЯ И SCHEDULER
 # ============================================================================
 
 def check_auth() -> bool:
-    """Проверяет аутентификацию webhook'а."""
     if not config.telegram.webhook_secret:
         return True
-    
     header_secret = request.headers.get("X-Webhook-Secret", "")
     return hmac.compare_digest(header_secret, config.telegram.webhook_secret)
 
-# ============================================================================
-# АВТОМАТИЧЕСКИЕ ОТЧЕТЫ
-# ============================================================================
 
 def send_hourly_stats():
-    """Отправляет часовой отчет по продажам."""
     try:
         log.info("Starting hourly stats report...")
         if config.telegram.chat_id:
-            process_analytics_query(
-                config.telegram.chat_id,
-                "Продажи по магазинам за сегодня",
-                reply_markup=get_sales_inline_keyboard()
-            )
-            log_extra(log, "INFO", "Hourly stats sent", chat_id=config.telegram.chat_id)
+            process_static_action(config.telegram.chat_id, "sales_by_store_today")
         else:
             log.warning("Chat ID for hourly stats is not configured")
     except Exception as e:
         log.error(f"Error in send_hourly_stats: {str(e)}", exc_info=True)
 
-# ============================================================================
-# ЗАПУСК SCHEDULER
-# ============================================================================
 
 scheduler = BackgroundScheduler(timezone="Europe/Moscow")
 scheduler.add_job(send_hourly_stats, 'cron', hour='9-21', minute=0)
 scheduler.start()
 
-# Отправка стартового сообщения
 try:
     if config.telegram.chat_id:
         telegram_client.send_message(
@@ -321,7 +536,7 @@ except Exception as e:
     log.error(f"Failed to send startup message: {str(e)}")
 
 # ============================================================================
-# API ЭНДПОИНТЫ
+# ЭНДПОИНТЫ
 # ============================================================================
 
 @app.route("/health", methods=["GET"])
@@ -333,12 +548,22 @@ def health():
     }), 200
 
 
+@app.route("/debug-env", methods=["GET"])
+def debug_env():
+    webhook = (os.getenv("PBI_WEBHOOK_URL") or os.getenv("MAKE_WEBHOOK_URL") or "").strip()
+    return jsonify({
+        "has_webhook": bool(webhook),
+        "webhook_preview": webhook[:35] + "..." if webhook else "ОТСУТСТВУЕТ",
+        "has_tenant_id": bool(os.getenv("PBI_TENANT_ID") or os.getenv("POWERBI_TENANT_ID")),
+        "has_client_id": bool(os.getenv("PBI_CLIENT_ID") or os.getenv("POWERBI_CLIENT_ID")),
+        "has_client_secret": bool(os.getenv("PBI_CLIENT_SECRET") or os.getenv("POWERBI_CLIENT_SECRET")),
+        "has_dataset_id": bool(os.getenv("PBI_DATASET_ID") or os.getenv("POWERBI_DATASET_ID")),
+    }), 200
+
+
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
-    """Главный webhook для обработки сообщений из Telegram."""
-    
     if not check_auth():
-        log_extra(log, "WARNING", "Unauthorized webhook request", ip=request.remote_addr)
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
     
     try:
@@ -347,7 +572,7 @@ def telegram_webhook():
         log.error(f"Failed to parse JSON: {str(e)}")
         return jsonify({"status": "error", "message": "Invalid JSON"}), 400
     
-    # Обработка Inline-кнопок
+    # Обработка нажатий на Inline-кнопки
     if "callback_query" in data:
         try:
             callback = data["callback_query"]
@@ -356,39 +581,23 @@ def telegram_webhook():
             action = callback.get("data", "")
             
             if not callback_id or not chat_id:
-                log.error("Invalid callback_query structure")
                 return jsonify({"status": "ok"})
             
-            log_extra(log, "INFO", "Callback query received", chat_id=chat_id, action=action)
             telegram_client.answer_callback_query(callback_id)
             
-            action_map = {
-                "sales_by_store_today": "Продажи по магазинам за сегодня",
-                "sales_yesterday": "Продажи за вчера по магазинам",
-                "sales_month": "Продажи за этот месяц по магазинам",
-                "sales_pionersky": "Продажи магазина Пионерский за сегодня",
-                "sales_ozero": "Продажи магазина Озеро за сегодня",
-                "sales_utrish": "Продажи магазина Утриш за сегодня",
-                "sales_dzhemete": "Продажи магазина Джемете за сегодня",
-                "expenses_by_store": "Расходы по магазинам за этот месяц",
-                "expenses_by_category": "Расходы по статьям за этот месяц",
-                "expenses_today": "Расходы за сегодня",
-                "expenses_month": "Расходы за этот месяц всего",
-                "salary_period": "Зарплата за текущий расчётный период",
-                "salary_by_emp": "Зарплата по сотрудникам за этот месяц",
-                "plan_status": "Выполнение плана по магазинам за сегодня",
-                "top_products_today": "Топ 5 продаваемых товаров за сегодня"
-            }
-            
-            user_text = action_map.get(action, "Продажи за сегодня")
-            process_analytics_query(chat_id, user_text)
+            # Перехватываем кнопки меню в статический DAX
+            if action in STATIC_DAX_MAP:
+                process_static_action(chat_id, action)
+            else:
+                process_analytics_query(chat_id, action)
+
             return jsonify({"status": "ok"})
         
         except Exception as e:
             log.error(f"Error processing callback_query: {str(e)}", exc_info=True)
             return jsonify({"status": "ok"})
     
-    # Обработка текстовых сообщений
+    # Обработка обычных сообщений
     if "message" in data:
         try:
             msg = data["message"]
@@ -397,8 +606,6 @@ def telegram_webhook():
             
             if not chat_id or not text:
                 return jsonify({"status": "ok"})
-            
-            log_extra(log, "INFO", "Message received", chat_id=chat_id, text=text[:50])
             
             if text == "/start":
                 telegram_client.send_message(
@@ -440,6 +647,7 @@ def telegram_webhook():
                 )
                 return jsonify({"status": "ok"})
             
+            # Свободный текстовый вопрос отправляем в GPT-роутер
             process_analytics_query(chat_id, text)
             return jsonify({"status": "ok"})
         
@@ -449,20 +657,6 @@ def telegram_webhook():
     
     return jsonify({"status": "ok"})
 
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"status": "error", "message": "Not found"}), 404
-
-
-@app.errorhandler(500)
-def internal_error(error):
-    log.error(f"Internal server error: {str(error)}", exc_info=True)
-    return jsonify({"status": "error", "message": "Internal server error"}), 500
-
-# ============================================================================
-# ЗАПУСК ПРИЛОЖЕНИЯ
-# ============================================================================
 
 if __name__ == "__main__":
     log_extra(log, "INFO", "Starting bot server", port=config.port, debug=config.debug)
